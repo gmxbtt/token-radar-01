@@ -102,6 +102,15 @@ tbody tr:last-child td { border-bottom: 0; }
 .consts li { display: flex; justify-content: space-between; gap: var(--s3); border-bottom: 1px solid var(--border); padding-bottom: 6px; font-size: 13px; }
 .consts li b { font-family: var(--num); font-weight: 600; }
 .note { border-left: 3px solid var(--accent); padding-left: var(--s3); }
+.method h3 { color: var(--ink); margin-top: var(--s2); }
+.valid { width: 100%; border-collapse: collapse; font-size: 13px; }
+.valid caption { padding: var(--s2) 0; border-bottom: 1px solid var(--border); }
+.valid th, .valid td { padding: 9px 10px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+.valid thead th { background: var(--raised); color: var(--muted); font-size: 12px; }
+.valid thead th.num, .valid tbody td.num { text-align: right; }
+.valid tbody tr:last-child td { border-bottom: 0; }
+.valid td { color: var(--muted); }
+.valid td.num { font-family: var(--num); color: var(--ink); }
 
 .detail { position: fixed; top: 0; right: 0; bottom: 0; width: min(540px, 94vw); z-index: 10; margin: 0 0 0 auto; max-height: 100%; background: var(--surface); color: var(--ink); border: 0; border-left: 1px solid var(--border); padding: var(--s5); overflow-y: auto; }
 .detail::backdrop { background: rgba(4, 10, 8, .6); }

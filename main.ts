@@ -1,11 +1,13 @@
 // token-radar-01: the entry's driver (Node 22, standard library only).
 //
-// It reads the sealed snapshot from /input/snapshot.json (or --input <file|dir>), scores every
-// pre-token protocol with the radar-2.1 model in lib/model.ts, and writes the ranked board to
-// /output/board.json plus the dashboard's data to /output/data.js. It then copies this
-// repository's dashboard/ and screenshots/ into /output, and writes /output/dossier.json last —
-// the summary the judge reads — with the vendored make.fun library, which rebuilds the dossier
-// from /output and compares bytes, so the files above must already be final when it runs.
+// It reads the sealed snapshot from /input/snapshot.json (or --input <file|dir>), fits the radar-3.0
+// model to the snapshot's own comparables in lib/model.ts, and writes the ranked board to
+// /output/board.json plus the dashboard's data to /output/data.js and the fit's record to
+// /output/dashboard/fit.js — the fit is computed at run time, and fit.js is how the judge reads it
+// with the page's source. It then copies this repository's dashboard/ and screenshots/ into /output,
+// and writes /output/dossier.json last — the summary the judge reads — with the vendored make.fun
+// library, which rebuilds the dossier from /output and compares bytes, so the files above must
+// already be final when it runs.
 //
 // The dashboard is a static page, no framework and no network: dashboard/index.html,
 // dashboard/app.css and dashboard/app.js read /output/data.js, the same board this program
@@ -20,7 +22,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { boardIssue, buildRadar, dataScript, parseSnapshot } from './lib/model.ts';
+import { boardIssue, buildRadar, dataScript, fitScript, parseSnapshot } from './lib/model.ts';
 import { buildDossier } from './vendor/makefun-board.ts';
 
 const REPO_ROOT = fileURLToPath(new URL('.', import.meta.url));
@@ -72,7 +74,7 @@ function main(): void {
   const out = arg('output', process.env.MAKEFUN_OUTPUT_DIR ?? '/output');
 
   const snapshot = parseSnapshot(readFileSync(inputFile, 'utf8'));
-  const { board, radar } = buildRadar(snapshot);
+  const { board, radar, fit } = buildRadar(snapshot);
   const issue = boardIssue(board, snapshot);
   if (issue !== null) fail(`the model wrote a board the gate refuses: ${issue}`);
 
@@ -84,6 +86,9 @@ function main(): void {
   if (!dashboard.includes('index.html')) {
     fail(`dashboard/ has no index.html to serve (copied ${dashboard.length} file${dashboard.length === 1 ? '' : 's'})`);
   }
+  // The fit's record is written into the dashboard itself, before the dossier is built, so the judge
+  // reads the fitted curve and its validation with the page's source.
+  writeFileSync(join(out, 'dashboard', 'fit.js'), fitScript(fit));
 
   const shots = copyFiles(join(REPO_ROOT, 'screenshots'), join(out, 'screenshots'));
   if (shots.length < 3) {
@@ -114,7 +119,8 @@ function main(): void {
 
   process.stdout.write(
     `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored (${radar.early_size} early, ${radar.live_size} live set aside)\n` +
-      `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (${dashboard.length} files), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
+      `token radar: fit on ${fit.comps_fitted} comps (of ${fit.comps_total} with a token; ${fit.comps_zero_mcap} zero market cap, ${fit.comps_trimmed} trimmed): log mcap = ${fit.size_intercept} + ${fit.size_slope} x log TVL, in-sample R2 ${fit.r2_in}, time-split R2 ${fit.time_r2}, median APE ${fit.time_med_ape}\n` +
+      `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (${dashboard.length + 1} files, incl. fit.js), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
   );
 }
 

@@ -4,7 +4,7 @@
 [![rank](https://make.fun/badge/token-radar-01/gmxbtt/token-radar-01/rank.svg)](https://make.fun/bounty/token-radar-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
 [![reward](https://make.fun/badge/token-radar-01/gmxbtt/token-radar-01/reward.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
 
-A token launch radar that ranks pre-token DeFi protocols by an implied value derived from each protocol's TVL, seven-day growth and time running with no token, with a concrete farm plan for every protocol.
+A token launch radar that ranks pre-token DeFi protocols by an implied value from a size curve fitted to the snapshot's own token comparables (log market cap on log TVL, validated out of sample), with a concrete farm plan for every protocol.
 
 ## Run it
 

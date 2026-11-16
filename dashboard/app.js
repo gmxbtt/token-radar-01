@@ -1,12 +1,16 @@
-// Token Radar dashboard. Reads window.RADAR (data.js, loaded beside dashboard/ by
-// index.html) and renders the ranked pre-token board, filters, a per-protocol detail
-// view, the separate live-token section and the methodology. No network: no fetch,
-// no external fonts, no links out — every value shown comes from data.js.
+// Token Radar dashboard (radar-3.0). Reads window.RADAR (data.js, one level up)
+// and window.FIT (fit.js, beside this file) and renders the ranked pre-token
+// board, filters, a per-protocol detail view, the separate live-token section
+// and the methodology. No network: no fetch, no external fonts, no links out
+// — every value shown comes from data.js and fit.js. All fit numbers are read
+// from window.FIT at render time, never hard-coded; if fit.js is missing the
+// methodology degrades to the model rationale alone.
 (function () {
   'use strict';
 
   var DATA = window.RADAR;
   if (!DATA) return;
+  var FIT = window.FIT || null;
   var app = document.getElementById('board');
   var state = { q: '', category: 'all', chain: 'all', watchOnly: false, minTvl: '', sort: 'implied', dir: -1, selected: null };
 
@@ -24,6 +28,14 @@
   function fmtAge(days) {
     if (days === null || days === undefined) return 'unknown';
     return Math.max(0, Math.round(days)) + 'd';
+  }
+  function fmtNum(n, digits) {
+    if (n === null || n === undefined || !isFinite(n)) return 'n/a';
+    return n.toFixed(digits === undefined ? 2 : digits);
+  }
+  function fmtR2(n) {
+    if (n === null || n === undefined || !isFinite(n)) return 'n/a';
+    return n.toFixed(2);
   }
 
   // A row carries the WATCHLIST badge only when the model flags it as one of
@@ -50,48 +62,6 @@
       else node.appendChild(child);
     }
     return node;
-  }
-
-  // Farm checklist, generated in this page from the row's own category, chains, TVL
-  // and age. It is NOT the board's farm plan: the full plan with its steps lives in
-  // board.json, which data.js does not carry. Costs and times are stated per step.
-  function capitalFor(p) {
-    if (p.tvl_usd >= 5e9) return 250;
-    if (p.tvl_usd >= 1e9) return 150;
-    if (p.tvl_usd >= 1e8) return 100;
-    return 50;
-  }
-  function holdFor(age) {
-    if (age === null || age === undefined) return 30;
-    if (age < 180) return 60;
-    if (age < 365) return 45;
-    return 30;
-  }
-  function actionFor(p, capital, chain) {
-    var c = (p.category || '').toLowerCase();
-    if (c.indexOf('lend') >= 0 || c.indexOf('cdp') >= 0 || c.indexOf('collateral') >= 0) return 'Supply $' + capital + ' of USDC to ' + p.name + ' on ' + chain + ' and keep the position open.';
-    if (c.indexOf('dex') >= 0 || c.indexOf('yield') >= 0 || c.indexOf('leveraged farm') >= 0) return 'Provide $' + capital + ' of liquidity to ' + p.name + '\u2019s main pool on ' + chain + ' and keep the position open.';
-    if (c.indexOf('bridge') >= 0) return 'Bridge $' + capital + ' of USDC to ' + chain + ' through ' + p.name + ' and use the bridged funds in its app.';
-    if (c.indexOf('staking') >= 0 || c.indexOf('restak') >= 0) return 'Stake $' + capital + ' of the chain\u2019s staking asset through ' + p.name + ' and keep the receipt.';
-    if (c.indexOf('perpetual') >= 0 || c.indexOf('derivative') >= 0) return 'Deposit $' + capital + ' of USDC as margin on ' + p.name + ' and open one small hedge.';
-    if (c.indexOf('prediction') >= 0) return 'Fund $' + capital + ' and place one market position on ' + p.name + '.';
-    if (c.indexOf('curator') >= 0 || c.indexOf('allocator') >= 0) return 'Deposit $' + capital + ' into a ' + p.name + ' vault on ' + chain + ' and keep the shares.';
-    if (c.indexOf('stable') >= 0) return 'Mint or deposit $' + capital + ' of the stable asset through ' + p.name + ' on ' + chain + '.';
-    if (c.indexOf('rwa') >= 0) return 'Mint $' + capital + ' of the protocol\u2019s yield asset on ' + chain + ' and hold it.';
-    if (c.indexOf('insurance') >= 0) return 'Buy $' + capital + ' of cover from ' + p.name + ' on ' + chain + ' and keep the policy.';
-    return 'Deposit $' + capital + ' of USDC into ' + p.name + ' on ' + chain + ' and keep the position open.';
-  }
-  function farmChecklist(p) {
-    var chain = p.chains && p.chains.length ? p.chains[0] : 'its main chain';
-    var capital = capitalFor(p);
-    var hold = holdFor(p.age_days);
-    return [
-      { text: 'Use a fresh wallet that holds only the funds you plan to farm, and keep its seed phrase offline.', cost: 'under $3 of gas for the first transaction', time: '5 minutes' },
-      { text: actionFor(p, capital, chain), cost: '$' + capital + ' of capital and about $' + (capital >= 150 ? 8 : 4) + ' of gas', time: '15 minutes to set up' },
-      { text: 'Make one qualifying action each week, such as a deposit, a borrow, a swap or a vote.', cost: 'about $2 of gas a week', time: '10 minutes a week' },
-      { text: 'Hold the position for at least ' + hold + ' days so the activity is counted in more than one snapshot.', cost: 'the $' + capital + ' stays in the position', time: hold + ' days' },
-      { text: 'Before you withdraw, open the protocol\u2019s own points or rewards page and claim only from the link it publishes, then write the wallet, dates and transactions in a farm log.', cost: 'no fee to check, and never pay to claim', time: '10 minutes' }
-    ];
   }
 
   function filtered() {
@@ -136,13 +106,14 @@
 
   function hero() {
     var top = DATA.rows[0];
+    var fitStat = FIT ? fmtR2(FIT.r2_in) : 'n/a';
     return el('section', { class: 'hero' },
       el('h1', { text: 'Pre-token protocols, ranked by implied value' }),
       el('p', null, 'The watchlist is the snapshot\u2019s named list of ', el('b', { text: String(DATA.watchlist_size) }), ' pre-token protocols, each at or above ', el('b', { text: fmtUsd(DATA.floor_usd) }), ' of TVL. The radar adds ', el('b', { text: String(DATA.early_size) }), ' further pre-token protocols the watchlist does not name, so the board covers ', el('b', { text: String(DATA.board_size) }), ' rows in all. Implied value is this entry\u2019s own claim, not a prediction of a launch.'),
       el('div', { class: 'stats' },
         el('div', { class: 'stat' }, el('span', { text: 'Board rows' }), el('b', { text: String(DATA.board_size) })),
         el('div', { class: 'stat' }, el('span', { text: 'Watchlist covered' }), el('b', { class: 'accent', text: DATA.watchlist_size + ' / ' + DATA.watchlist_size })),
-        el('div', { class: 'stat' }, el('span', { text: 'Top implied value' }), el('b', { text: top ? fmtUsd(top.implied_value_usd) : 'n/a' })),
+        el('div', { class: 'stat' }, el('span', { text: 'In-sample R\u00B2 (size curve fit)' }), el('b', { text: fitStat })),
         el('div', { class: 'stat' }, el('span', { text: 'Live-token protocols set aside' }), el('b', { text: String(DATA.live_size) }))
       )
     );
@@ -245,7 +216,7 @@
     return el('div', { class: 'panel' },
       el('div', { class: 'table-wrap' },
         el('table', null,
-          el('caption', { text: 'Pre-token protocols only — strongest implied value first. Select a row for its model breakdown and farm checklist.' }),
+          el('caption', { text: 'Pre-token protocols only — strongest implied value first. Select a row for its model breakdown and farm plan.' }),
           el('thead', null, el('tr', null,
             sortHeader('rank', 'Rank'),
             sortHeaderLeft('name', 'Protocol'),
@@ -295,34 +266,81 @@
     );
   }
 
-  // Methodology, rendered from DATA.model and DATA.model_rationale: every
-  // number below comes from the data, so a model change needs no page edit.
+  // Methodology, rendered from window.FIT (fit.js) and DATA.model_rationale:
+  // every fit number below comes from the data, so a refit needs no page edit.
+  // If fit.js failed to load, the section degrades to the rationale alone.
   function methodSection() {
-    var m = DATA.model;
-    return el('section', { class: 'panel method' },
+    var sec = el('section', { class: 'panel method' },
       el('h2', { text: 'How implied value is computed' }),
-      el('p', { text: DATA.model_rationale }),
-      el('div', { class: 'formula' },
-        el('b', { text: 'implied = (TVL / ' + fmtUsd(m.size_reference_usd) + ')^' + m.size_exponent + ' × ' + fmtUsd(m.size_scale_usd) + ' × growth multiplier × maturity multiplier' })
-      ),
-      el('ul', { class: 'consts' },
-        el('li', null, el('span', { text: 'Size exponent' }), el('b', { text: String(m.size_exponent) })),
-        el('li', null, el('span', { text: 'Size reference' }), el('b', { text: fmtUsd(m.size_reference_usd) })),
-        el('li', null, el('span', { text: 'Size scale' }), el('b', { text: fmtUsd(m.size_scale_usd) })),
-        el('li', null, el('span', { text: 'Growth weight' }), el('b', { text: String(m.growth_weight) })),
-        el('li', null, el('span', { text: 'Growth saturation' }), el('b', { text: m.growth_saturation_pct + '%' })),
-        el('li', null, el('span', { text: 'Growth down weight' }), el('b', { text: String(m.growth_down_weight) })),
-        el('li', null, el('span', { text: 'Growth floor multiplier' }), el('b', { text: String(m.growth_floor_mult) })),
-        el('li', null, el('span', { text: 'Growth clamped to' }), el('b', { text: m.growth_floor + '% to +' + m.growth_cap + '%' })),
-        el('li', null, el('span', { text: 'Maturity floor' }), el('b', { text: String(m.maturity_floor) })),
-        el('li', null, el('span', { text: 'Maturity range' }), el('b', { text: '+' + String(m.maturity_range) })),
-        el('li', null, el('span', { text: 'Maturity over' }), el('b', { text: m.maturity_days + ' days' })),
-        el('li', null, el('span', { text: 'Unknown age counts as' }), el('b', { text: m.unknown_age_days + ' days' })),
-        el('li', null, el('span', { text: 'Model version' }), el('b', { text: DATA.model_version }))
-      ),
-      el('p', null, 'Snapshot ', el('b', { text: DATA.as_of }), ' from DefiLlama. Watchlist floor ', el('b', { text: fmtUsd(DATA.floor_usd) }), ': ', el('b', { text: String(DATA.watchlist_size) }), ' watchlist protocols covered, ', el('b', { text: String(DATA.early_size) }), ' further rows found by the radar, ', el('b', { text: String(DATA.board_size) }), ' rows on the board. A protocol is called pre-token because its DefiLlama record carries no token — not as proof that it has none.'),
-      el('p', { class: 'note' }, 'Implied values are this entry\u2019s own claim from the model above. They are not a prediction that a token will launch, when it will launch, or what it will be worth if it does.')
+      el('p', { text: DATA.model_rationale })
     );
+    if (!FIT) {
+      sec.appendChild(el('p', { class: 'note' }, 'Fit details are unavailable in this copy: fit.js did not load. The numbers above are the model\u2019s own summary; the fitted curve, its coefficients and its validation are shown when fit.js is present.'));
+      sec.appendChild(methodFoot());
+      return sec;
+    }
+    sec.appendChild(el('div', { class: 'formula' },
+      el('b', { text: 'ln(implied value) = ' + fmtNum(FIT.size_intercept, 4) + ' + ' + fmtNum(FIT.size_slope, 3) + ' × ln(TVL),  then × growth tilt' })
+    ));
+    sec.appendChild(el('p', { text: 'The size curve is a regression of log market cap on log TVL (natural logs), fitted to the snapshot itself. A protocol\u2019s size value is the curve read at its TVL; the growth tilt then nudges it up or down by the week\u2019s TVL change. The curve is the whole size story: a protocol twice as large in TVL is not twice as valuable — the slope below one means implied value grows more slowly than TVL.' }));
+    sec.appendChild(el('ul', { class: 'consts' },
+      el('li', null, el('span', { text: 'Comparables in snapshot' }), el('b', { text: String(FIT.comps_total) })),
+      el('li', null, el('span', { text: 'Usable (positive market cap)' }), el('b', { text: String(FIT.comps_usable) })),
+      el('li', null, el('span', { text: 'Zero market cap, excluded' }), el('b', { text: String(FIT.comps_zero_mcap) })),
+      el('li', null, el('span', { text: 'Trimmed outside [' + fmtNum(FIT.ratio_low) + ', ' + fmtNum(FIT.ratio_high, 0) + ']' }), el('b', { text: String(FIT.comps_trimmed) })),
+      el('li', null, el('span', { text: 'Comparables fitted' }), el('b', { text: String(FIT.comps_fitted) })),
+      el('li', null, el('span', { text: 'Size intercept' }), el('b', { text: fmtNum(FIT.size_intercept, 4) })),
+      el('li', null, el('span', { text: 'Size slope' }), el('b', { text: fmtNum(FIT.size_slope, 3) })),
+      el('li', null, el('span', { text: 'Growth coefficient (fitted)' }), el('b', { text: fmtNum(FIT.growth_coef_raw, 3) })),
+      el('li', null, el('span', { text: 'Growth tilt cap' }), el('b', { text: '×' + fmtNum(FIT.growth_tilt_low) + ' – ×' + fmtNum(FIT.growth_tilt_high) })),
+      el('li', null, el('span', { text: 'Age coefficient (fitted)' }), el('b', { text: fmtNum(FIT.age_coef, 3) }))
+    ));
+    sec.appendChild(el('p', { text: 'Age does not move the value. Its fitted coefficient is ' + fmtNum(FIT.age_coef, 3) + ' — indistinguishable from zero — so age is shown on every row and sets the farm hold, but it carries no weight in the implied value. Growth does move it, but only a little: the fitted coefficient is ' + fmtNum(FIT.growth_coef_raw, 3) + ', and the tilt is capped at ×' + fmtNum(FIT.growth_tilt_low) + ' to ×' + fmtNum(FIT.growth_tilt_high) + ' so one hot week can never crown a protocol. The cap is not a guess — the validation table below shows a free growth term doing worse out of sample, which is why the tilt is capped.' }));
+    sec.appendChild(el('h3', { text: 'Validation — how honest the curve is' }));
+    sec.appendChild(el('div', { class: 'table-wrap' },
+      el('table', { class: 'valid' },
+        el('caption', { text: 'Fit and out-of-sample checks, all read from fit.js. Median APE is the median absolute percentage error.' }),
+        el('thead', null, el('tr', null,
+          el('th', { scope: 'col', text: 'Check' }),
+          el('th', { scope: 'col', class: 'num', text: 'R²' }),
+          el('th', { scope: 'col', class: 'num', text: 'Median APE' }),
+          el('th', { scope: 'col', text: 'Notes' })
+        )),
+        el('tbody', null,
+          el('tr', { class: 'plain' },
+            el('td', { text: 'In-sample fit' }),
+            el('td', { class: 'num', text: fmtR2(FIT.r2_in) }),
+            el('td', { class: 'num', text: Math.round(FIT.med_ape_in * 100) + '%' }),
+            el('td', { text: FIT.comps_fitted + ' comparables; residual SD (log) ' + fmtNum(FIT.resid_sd_log) })
+          ),
+          el('tr', { class: 'plain' },
+            el('td', { text: 'Time split (fit before ' + FIT.time_split_cut + ')' }),
+            el('td', { class: 'num', text: fmtR2(FIT.time_r2) }),
+            el('td', { class: 'num', text: Math.round(FIT.time_med_ape * 100) + '%' }),
+            el('td', { text: 'Train ' + FIT.time_train_n + ', test ' + FIT.time_test_n + '; median bias ×' + fmtNum(FIT.time_med_bias) })
+          ),
+          el('tr', { class: 'plain' },
+            el('td', { text: 'Time split, growth left free' }),
+            el('td', { class: 'num', text: fmtR2(FIT.time_growth_r2) }),
+            el('td', { class: 'num', text: Math.round(FIT.time_growth_med_ape * 100) + '%' }),
+            el('td', { text: 'Worse than the capped tilt — the reason the tilt is capped' })
+          ),
+          el('tr', { class: 'plain' },
+            el('td', { text: '5-fold cross-validation (mean)' }),
+            el('td', { class: 'num', text: fmtR2(FIT.fold_r2_mean) }),
+            el('td', { class: 'num', text: Math.round(FIT.fold_med_ape_mean * 100) + '%' }),
+            el('td', { text: 'Mean across the five folds' })
+          )
+        )
+      )
+    ));
+    sec.appendChild(el('p', { class: 'note' }, 'Read these numbers as an order of magnitude, not a dollar figure. Token multiples spread over more than one order of magnitude even after size is accounted for — the median error above is around three quarters — so every row carries a wide 90% range and the rank, not the dollar figure, is the claim.'));
+    sec.appendChild(methodFoot());
+    return sec;
+  }
+
+  function methodFoot() {
+    return el('p', null, 'Snapshot ', el('b', { text: DATA.as_of }), ' from DefiLlama. Watchlist floor ', el('b', { text: fmtUsd(DATA.floor_usd) }), ': ', el('b', { text: String(DATA.watchlist_size) }), ' watchlist protocols covered, ', el('b', { text: String(DATA.early_size) }), ' further rows found by the radar, ', el('b', { text: String(DATA.board_size) }), ' rows on the board. A protocol is called pre-token because its DefiLlama record carries no token — not as proof that it has none.');
   }
 
   var dialog = el('dialog', { class: 'detail', id: 'detail', 'aria-labelledby': 'detail-title' });
@@ -334,10 +352,6 @@
     if (!row) return;
     state.selected = slug;
     dialog.textContent = '';
-    // Radar-2 breakdown, from the row's own multipliers only. The implied value
-    // is shown exactly as the row states it; the size component is the row's
-    // size multiplier applied to the model's size scale.
-    var sizeValue = row.size_multiplier * DATA.model.size_scale_usd;
     dialog.appendChild(el('div', { class: 'detail-head' },
       el('div', null,
         el('span', { class: 'sub', text: 'Rank ' + row.rank + ' of ' + DATA.board_size + (isWatch(row) ? ' · Watchlist' : ' · Early radar') }),
@@ -358,24 +372,36 @@
         el('div', null, el('span', { text: 'Token on record' }), el('b', { class: 'plain', text: 'none — pre-token' }))
       )
     ));
+    // Radar-3.0 breakdown, from the row's own fitted components: the size
+    // value is the curve read at this TVL, the tilt is the capped growth
+    // multiplier, and the interval is the 90% range from the comps' scatter.
     dialog.appendChild(el('section', { class: 'd-section' },
       el('h3', { text: 'Model breakdown' }),
       el('div', { class: 'rows' },
-        el('div', null, el('span', { text: 'Size multiplier' }), el('b', { text: '× ' + row.size_multiplier })),
-        el('div', null, el('span', { text: 'Size component (size multiplier × ' + fmtUsd(DATA.model.size_scale_usd) + ')' }), el('b', { text: fmtUsd(sizeValue) })),
-        el('div', null, el('span', { text: 'Growth multiplier' }), el('b', { text: '× ' + row.growth_multiplier })),
-        el('div', null, el('span', { text: 'Maturity multiplier' }), el('b', { text: '× ' + row.maturity_multiplier })),
-        el('div', null, el('span', { text: 'Implied value' }), el('b', { text: fmtUsd(row.implied_value_usd) }))
+        el('div', null, el('span', { text: 'Size value (curve at this TVL)' }), el('b', { text: fmtUsd(row.size_value_usd) })),
+        el('div', null, el('span', { text: 'Growth tilt' }), el('b', { text: '× ' + fmtNum(row.growth_tilt, 4) })),
+        el('div', null, el('span', { text: 'Age weight' }), el('b', { text: '× 1.00 — age does not move value' })),
+        el('div', null, el('span', { text: 'Implied value' }), el('b', { text: fmtUsd(row.implied_value_usd) })),
+        el('div', null, el('span', { text: '90% interval' }), el('b', { text: fmtUsd(row.interval_low_usd) + ' – ' + fmtUsd(row.interval_high_usd) }))
       ),
-      el('p', { text: 'Model ' + DATA.model_version + ': the implied value above is the value the board carries for this row, shown exactly as stated. An estimate, not a price.' })
+      el('p', { text: 'Model ' + DATA.model_version + ': the implied value above is the value the board carries for this row, shown exactly as stated. The interval is wide on purpose — see the methodology. An estimate of an order of magnitude, not a price.' })
     ));
-    dialog.appendChild(el('section', { class: 'd-section' },
-      el('h3', { text: 'Farm checklist — generated in this page' }),
-      el('p', { text: 'The full farm plan for this protocol lives in board.json; data.js carries no farm steps, so this checklist is generated here from the row\u2019s category, chains, TVL and age. It is a starting checklist, not the board\u2019s plan.' }),
-      el('ol', { class: 'steps' }, farmChecklist(row).map(function (s) {
-        return el('li', null, el('b', { text: s.text }), el('span', { class: 'cost', text: 'Cost: ' + s.cost + '. Time: ' + s.time + '.' }));
-      }))
-    ));
+    // Farm plan, verbatim from the board: the eight steps live in
+    // row.farm_steps (carried by data.js from board.json) and are shown here
+    // exactly as written, with the plan's own totals.
+    var steps = Array.isArray(row.farm_steps) ? row.farm_steps : [];
+    var farmSec = el('section', { class: 'd-section' },
+      el('h3', { text: 'Farm plan — from board.json' }),
+      el('p', { text: 'The eight-step plan below is the board\u2019s own farm plan for this protocol, shown exactly as written in board.json. Totals: ' + fmtUsd(row.farm_capital_usd) + ' of capital, about ' + fmtUsd(row.farm_gas_usd) + ' of gas, hold at least ' + row.farm_hold_days + ' days.' })
+    );
+    if (steps.length) {
+      farmSec.appendChild(el('ol', { class: 'steps' }, steps.map(function (s) {
+        return el('li', { text: s });
+      })));
+    } else {
+      farmSec.appendChild(el('p', { text: 'No farm plan is recorded for this row.' }));
+    }
+    dialog.appendChild(farmSec);
     if (typeof dialog.showModal === 'function') {
       if (!dialog.open) dialog.showModal();
     } else {
