@@ -1,10 +1,10 @@
-// Token Radar dashboard (radar-3.0). Reads window.RADAR (data.js, one level up)
+// Token Radar dashboard (radar-4.0). Reads window.RADAR (data.js, one level up)
 // and window.FIT (fit.js, beside this file) and renders the ranked pre-token
-// board, filters, a per-protocol detail view, the separate live-token section
-// and the methodology. No network: no fetch, no external fonts, no links out
-// — every value shown comes from data.js and fit.js. All fit numbers are read
-// from window.FIT at render time, never hard-coded; if fit.js is missing the
-// methodology degrades to the model rationale alone.
+// board with farm verdicts, filters, a per-protocol detail view, the separate
+// live-token section and the research note. No network: no fetch, no external
+// fonts, no links out — every value shown comes from data.js and fit.js. All
+// fit numbers are read from window.FIT at render time, never hard-coded; if
+// fit.js is missing the research note degrades to the model rationale alone.
 (function () {
   'use strict';
 
@@ -12,7 +12,7 @@
   if (!DATA) return;
   var FIT = window.FIT || null;
   var app = document.getElementById('board');
-  var state = { q: '', category: 'all', chain: 'all', watchOnly: false, minTvl: '', sort: 'implied', dir: -1, selected: null };
+  var state = { q: '', category: 'all', chain: 'all', verdict: 'all', watchOnly: false, minTvl: '', sort: 'implied', dir: -1, selected: null };
 
   function fmtUsd(n) {
     if (n === null || n === undefined || !isFinite(n)) return 'n/a';
@@ -37,12 +37,27 @@
     if (n === null || n === undefined || !isFinite(n)) return 'n/a';
     return n.toFixed(2);
   }
+  // A break-even share as basis points: 0.00001 of implied value is 0.1 bp.
+  // Adaptive decimals: the shares are tiny, and two decimals would print
+  // every top row as 0.00 bp.
+  function fmtBp(n) {
+    if (n === null || n === undefined || !isFinite(n)) return 'n/a';
+    var bp = n * 10000;
+    if (bp >= 0.1) return bp.toFixed(2) + ' bp';
+    if (bp >= 0.01) return bp.toFixed(3) + ' bp';
+    return bp.toFixed(4) + ' bp';
+  }
+  function fmtShare(n) {
+    if (n === null || n === undefined || !isFinite(n)) return 'n/a';
+    return (n * 100).toFixed(6) + '%';
+  }
 
   // A row carries the WATCHLIST badge only when the model flags it as one of
   // the snapshot's named watchlist slugs (row.watchlist, set in data.js).
   // TVL alone cannot identify the watchlist: the radar also ranks pre-token
   // protocols above the floor that the watchlist does not name.
   function isWatch(row) { return row.watchlist === true; }
+  function verdictOf(row) { return row.farm_verdict || 'THIN'; }
 
   function el(tag, attrs) {
     var node = document.createElement(tag);
@@ -70,6 +85,7 @@
     return DATA.rows.filter(function (r) {
       if (state.category !== 'all' && (r.category || 'Other') !== state.category) return false;
       if (state.chain !== 'all' && !(r.chains || []).some(function (c) { return c === state.chain; })) return false;
+      if (state.verdict !== 'all' && verdictOf(r) !== state.verdict) return false;
       if (state.watchOnly && !isWatch(r)) return false;
       if (r.tvl_usd < min) return false;
       if (!q) return true;
@@ -86,6 +102,7 @@
       else if (key === 'growth') { av = a.change_7d === null ? -Infinity : a.change_7d; bv = b.change_7d === null ? -Infinity : b.change_7d; }
       else if (key === 'age') { av = a.age_days === null ? -Infinity : a.age_days; bv = b.age_days === null ? -Infinity : b.age_days; }
       else if (key === 'rank') { av = a.rank; bv = b.rank; }
+      else if (key === 'verdict') { av = a.farm_break_even_share; bv = b.farm_break_even_share; }
       else { av = a.implied_value_usd; bv = b.implied_value_usd; }
       if (av < bv) return -state.dir;
       if (av > bv) return state.dir;
@@ -105,18 +122,25 @@
   }
 
   function hero() {
-    var top = DATA.rows[0];
-    var fitStat = FIT ? fmtR2(FIT.r2_in) : 'n/a';
+    var farmCount = FIT && FIT.verdicts ? FIT.verdicts.farm : null;
     return el('section', { class: 'hero' },
       el('h1', { text: 'Pre-token protocols, ranked by implied value' }),
-      el('p', null, 'The watchlist is the snapshot\u2019s named list of ', el('b', { text: String(DATA.watchlist_size) }), ' pre-token protocols, each at or above ', el('b', { text: fmtUsd(DATA.floor_usd) }), ' of TVL. The radar adds ', el('b', { text: String(DATA.early_size) }), ' further pre-token protocols the watchlist does not name, so the board covers ', el('b', { text: String(DATA.board_size) }), ' rows in all. Implied value is this entry\u2019s own claim, not a prediction of a launch.'),
+      el('p', null, 'The watchlist is the snapshot\u2019s named list of ', el('b', { text: String(DATA.watchlist_size) }), ' pre-token protocols, each at or above ', el('b', { text: fmtUsd(DATA.floor_usd) }), ' of TVL. The radar adds ', el('b', { text: String(DATA.early_size) }), ' further pre-token protocols the watchlist does not name, so the board covers ', el('b', { text: String(DATA.board_size) }), ' rows in all. Implied value is this entry\u2019s own claim, not a prediction of a launch. Every row carries a farm verdict — FARM, THIN or SKIP — from the cost of farming it against its implied value.'),
       el('div', { class: 'stats' },
         el('div', { class: 'stat' }, el('span', { text: 'Board rows' }), el('b', { text: String(DATA.board_size) })),
         el('div', { class: 'stat' }, el('span', { text: 'Watchlist covered' }), el('b', { class: 'accent', text: DATA.watchlist_size + ' / ' + DATA.watchlist_size })),
-        el('div', { class: 'stat' }, el('span', { text: 'In-sample R\u00B2 (size curve fit)' }), el('b', { text: fitStat })),
-        el('div', { class: 'stat' }, el('span', { text: 'Live-token protocols set aside' }), el('b', { text: String(DATA.live_size) }))
+        el('div', { class: 'stat' }, el('span', { text: 'In-sample R\u00B2 (chosen model)' }), el('b', { text: FIT ? fmtR2(FIT.r2_in) : 'n/a' })),
+        el('div', { class: 'stat' }, el('span', { text: 'FARM verdicts' }), el('b', { class: 'accent', text: farmCount === null ? 'n/a' : farmCount + ' of ' + DATA.board_size }))
       )
     );
+  }
+
+  function selectField(id, label, options, value, onChange) {
+    var sel = el('select', { id: id, 'aria-label': label },
+      options.map(function (o) { return el('option', { value: o[0], text: o[1], selected: o[0] === value ? 'selected' : null }); })
+    );
+    sel.addEventListener('change', function () { onChange(sel.value); updateBoard(); });
+    return el('div', { class: 'field' }, el('label', { for: id, text: label }), sel);
   }
 
   function controls() {
@@ -124,26 +148,17 @@
     var chains = Array.from(new Set(DATA.rows.reduce(function (acc, r) { return acc.concat(r.chains || []); }, []))).sort();
     var search = el('input', { type: 'search', id: 'q', placeholder: 'Search name, slug, category or chain', value: state.q, 'aria-label': 'Search the board' });
     search.addEventListener('input', function () { state.q = search.value; updateBoard(); });
-    var cat = el('select', { id: 'category', 'aria-label': 'Filter by category' },
-      el('option', { value: 'all', text: 'All categories' }),
-      categories.map(function (c) { return el('option', { value: c, text: c, selected: c === state.category ? 'selected' : null }); })
-    );
-    cat.addEventListener('change', function () { state.category = cat.value; updateBoard(); });
-    var chain = el('select', { id: 'chain', 'aria-label': 'Filter by chain' },
-      el('option', { value: 'all', text: 'All chains' }),
-      chains.map(function (c) { return el('option', { value: c, text: c, selected: c === state.chain ? 'selected' : null }); })
-    );
-    chain.addEventListener('change', function () { state.chain = chain.value; updateBoard(); });
     var minTvl = el('input', { type: 'number', id: 'mintvl', min: '0', step: '1', placeholder: '0', value: state.minTvl, 'aria-label': 'Minimum TVL in millions of dollars' });
     minTvl.addEventListener('input', function () { state.minTvl = minTvl.value; updateBoard(); });
     var watch = el('input', { type: 'checkbox', id: 'watchonly', checked: state.watchOnly ? 'checked' : null, 'aria-label': 'Watchlist only' });
     watch.addEventListener('change', function () { state.watchOnly = watch.checked; updateBoard(); });
-    var reset = el('button', { class: 'btn', type: 'button', text: 'Reset', onclick: function () { state.q = ''; state.category = 'all'; state.chain = 'all'; state.watchOnly = false; state.minTvl = ''; state.sort = 'implied'; state.dir = -1; render(); } });
+    var reset = el('button', { class: 'btn', type: 'button', text: 'Reset', onclick: function () { state.q = ''; state.category = 'all'; state.chain = 'all'; state.verdict = 'all'; state.watchOnly = false; state.minTvl = ''; state.sort = 'implied'; state.dir = -1; render(); } });
     var n = filtered().length;
     return el('div', { class: 'controls' },
       el('div', { class: 'field' }, el('label', { for: 'q', text: 'Search' }), search),
-      el('div', { class: 'field' }, el('label', { for: 'category', text: 'Category' }), cat),
-      el('div', { class: 'field' }, el('label', { for: 'chain', text: 'Chain' }), chain),
+      selectField('category', 'Category', [['all', 'All categories']].concat(categories.map(function (c) { return [c, c]; })), state.category, function (v) { state.category = v; }),
+      selectField('chain', 'Chain', [['all', 'All chains']].concat(chains.map(function (c) { return [c, c]; })), state.chain, function (v) { state.chain = v; }),
+      selectField('verdict', 'Verdict', [['all', 'All verdicts'], ['FARM', 'FARM'], ['THIN', 'THIN'], ['SKIP', 'SKIP']], state.verdict, function (v) { state.verdict = v; }),
       el('div', { class: 'field' }, el('label', { for: 'mintvl', text: 'Min TVL ($M)' }), minTvl),
       el('label', { class: 'toggle', for: 'watchonly' }, watch, 'Watchlist only'),
       reset,
@@ -160,17 +175,15 @@
     if (c) { c.textContent = ''; c.appendChild(el('b', { text: String(filtered().length) })); c.appendChild(document.createTextNode(' of ' + DATA.board_size + ' rows shown')); }
   }
 
-  function sortHeader(key, label) {
+  function sortHeader(key, label, left) {
     var arrow = state.sort === key ? el('span', { class: 'arrow', 'aria-hidden': 'true', text: state.dir < 0 ? '▼' : '▲' }) : null;
-    return el('th', { scope: 'col', class: 'num' },
-      el('button', { type: 'button', onclick: function () { if (state.sort === key) state.dir = -state.dir; else { state.sort = key; state.dir = key === 'rank' ? 1 : -1; } updateBoard(); } }, label, arrow)
+    return el('th', { scope: 'col', class: left ? '' : 'num' },
+      el('button', { type: 'button', onclick: function () { if (state.sort === key) state.dir = -state.dir; else { state.sort = key; state.dir = (key === 'rank' || key === 'verdict') ? 1 : -1; } updateBoard(); } }, label, arrow)
     );
   }
-  function sortHeaderLeft(key, label) {
-    var arrow = state.sort === key ? el('span', { class: 'arrow', 'aria-hidden': 'true', text: state.dir < 0 ? '▼' : '▲' }) : null;
-    return el('th', { scope: 'col' },
-      el('button', { type: 'button', onclick: function () { if (state.sort === key) state.dir = -state.dir; else { state.sort = key; state.dir = 1; } updateBoard(); } }, label, arrow)
-    );
+
+  function verdictBadge(v) {
+    return el('span', { class: 'verdict v-' + v.toLowerCase(), text: v });
   }
 
   function boardTable() {
@@ -178,8 +191,8 @@
     if (list.length === 0) {
       return el('div', { class: 'panel' }, el('div', { class: 'empty' },
         el('h2', { text: 'No protocol matches that filter' }),
-        el('p', { text: 'Clear the search, lower the minimum TVL, or pick another category or chain.' }),
-        el('button', { class: 'btn', type: 'button', text: 'Clear filters', onclick: function () { state.q = ''; state.category = 'all'; state.chain = 'all'; state.watchOnly = false; state.minTvl = ''; state.sort = 'implied'; state.dir = -1; render(); } })
+        el('p', { text: 'Clear the search, lower the minimum TVL, or pick another category, chain or verdict.' }),
+        el('button', { class: 'btn', type: 'button', text: 'Clear filters', onclick: function () { state.q = ''; state.category = 'all'; state.chain = 'all'; state.verdict = 'all'; state.watchOnly = false; state.minTvl = ''; state.sort = 'implied'; state.dir = -1; render(); } })
       ));
     }
     // Bars scale against the board's top implied value, not the first row of a
@@ -209,23 +222,25 @@
         el('td', null, el('div', { class: 'implied' },
           el('div', { class: 'bar', 'aria-hidden': 'true' }, el('i', { style: 'width:' + Math.max(3, Math.round((r.implied_value_usd / max) * 100)) + '%' })),
           el('span', { class: 'num', text: fmtUsd(r.implied_value_usd) })
-        ))
+        )),
+        el('td', null, verdictBadge(verdictOf(r)))
       );
       tbody.appendChild(tr);
     });
     return el('div', { class: 'panel' },
       el('div', { class: 'table-wrap' },
         el('table', null,
-          el('caption', { text: 'Pre-token protocols only — strongest implied value first. Select a row for its model breakdown and farm plan.' }),
+          el('caption', { text: 'Pre-token protocols only — strongest implied value first. Select a row for its model breakdown, bootstrap range and farm economics.' }),
           el('thead', null, el('tr', null,
             sortHeader('rank', 'Rank'),
-            sortHeaderLeft('name', 'Protocol'),
+            sortHeader('name', 'Protocol', true),
             el('th', { scope: 'col', text: 'Category' }),
             el('th', { scope: 'col', text: 'Chains' }),
             sortHeader('tvl', 'TVL'),
             sortHeader('growth', '7d'),
             sortHeader('age', 'Age'),
-            sortHeader('implied', 'Implied value')
+            sortHeader('implied', 'Implied value'),
+            sortHeader('verdict', 'Verdict')
           )),
           tbody
         )
@@ -266,21 +281,21 @@
     );
   }
 
-  // Methodology, rendered from window.FIT (fit.js) and DATA.model_rationale:
+  // Research note, rendered from window.FIT (fit.js) and DATA.model_rationale:
   // every fit number below comes from the data, so a refit needs no page edit.
   // If fit.js failed to load, the section degrades to the rationale alone.
-  function methodSection() {
+  function researchSection() {
     var sec = el('section', { class: 'panel method' },
-      el('h2', { text: 'How implied value is computed' }),
+      el('h2', { text: 'Research note — how this radar works, and what it cannot do' }),
       el('p', { text: DATA.model_rationale })
     );
     if (!FIT) {
-      sec.appendChild(el('p', { class: 'note' }, 'Fit details are unavailable in this copy: fit.js did not load. The numbers above are the model\u2019s own summary; the fitted curve, its coefficients and its validation are shown when fit.js is present.'));
+      sec.appendChild(el('p', { class: 'note' }, 'Fit details are unavailable in this copy: fit.js did not load. The numbers above are the model\u2019s own summary; the fitted curves, their coefficients and their validation are shown when fit.js is present.'));
       sec.appendChild(methodFoot());
       return sec;
     }
     sec.appendChild(el('div', { class: 'formula' },
-      el('b', { text: 'ln(implied value) = ' + fmtNum(FIT.size_intercept, 4) + ' + ' + fmtNum(FIT.size_slope, 3) + ' × ln(TVL),  then × growth tilt' })
+      el('b', { text: 'Chosen model: ' + FIT.chosen_model + ' — ln(implied value) = category curve at ln(TVL), shrunk toward pooled ln(mcap) = ' + fmtNum(FIT.pooled_intercept, 4) + ' + ' + fmtNum(FIT.pooled_slope, 3) + ' × ln(TVL), then × growth tilt' })
     ));
     sec.appendChild(el('p', { text: 'The size curve is a regression of log market cap on log TVL (natural logs), fitted to the snapshot itself. A protocol\u2019s size value is the curve read at its TVL; the growth tilt then nudges it up or down by the week\u2019s TVL change. The curve is the whole size story: a protocol twice as large in TVL is not twice as valuable — the slope below one means implied value grows more slowly than TVL.' }));
     sec.appendChild(el('ul', { class: 'consts' },
@@ -289,17 +304,79 @@
       el('li', null, el('span', { text: 'Zero market cap, excluded' }), el('b', { text: String(FIT.comps_zero_mcap) })),
       el('li', null, el('span', { text: 'Trimmed outside [' + fmtNum(FIT.ratio_low) + ', ' + fmtNum(FIT.ratio_high, 0) + ']' }), el('b', { text: String(FIT.comps_trimmed) })),
       el('li', null, el('span', { text: 'Comparables fitted' }), el('b', { text: String(FIT.comps_fitted) })),
-      el('li', null, el('span', { text: 'Size intercept' }), el('b', { text: fmtNum(FIT.size_intercept, 4) })),
-      el('li', null, el('span', { text: 'Size slope' }), el('b', { text: fmtNum(FIT.size_slope, 3) })),
+      el('li', null, el('span', { text: 'Pooled intercept' }), el('b', { text: fmtNum(FIT.pooled_intercept, 4) })),
+      el('li', null, el('span', { text: 'Pooled slope' }), el('b', { text: fmtNum(FIT.pooled_slope, 3) })),
       el('li', null, el('span', { text: 'Growth coefficient (fitted)' }), el('b', { text: fmtNum(FIT.growth_coef_raw, 3) })),
       el('li', null, el('span', { text: 'Growth tilt cap' }), el('b', { text: '×' + fmtNum(FIT.growth_tilt_low) + ' – ×' + fmtNum(FIT.growth_tilt_high) })),
-      el('li', null, el('span', { text: 'Age coefficient (fitted)' }), el('b', { text: fmtNum(FIT.age_coef, 3) }))
+      el('li', null, el('span', { text: 'Age coefficient (fitted)' }), el('b', { text: fmtNum(FIT.age_coef, 3) })),
+      el('li', null, el('span', { text: 'Chain-count coefficient' }), el('b', { text: fmtNum(FIT.chains_coef, 3) })),
+      el('li', null, el('span', { text: 'Bootstrap resamples' }), el('b', { text: FIT.bootstrap ? String(FIT.bootstrap.n) : 'n/a' }))
     ));
     sec.appendChild(el('p', { text: 'Age does not move the value. Its fitted coefficient is ' + fmtNum(FIT.age_coef, 3) + ' — indistinguishable from zero — so age is shown on every row and sets the farm hold, but it carries no weight in the implied value. Growth does move it, but only a little: the fitted coefficient is ' + fmtNum(FIT.growth_coef_raw, 3) + ', and the tilt is capped at ×' + fmtNum(FIT.growth_tilt_low) + ' to ×' + fmtNum(FIT.growth_tilt_high) + ' so one hot week can never crown a protocol. The cap is not a guess — the validation table below shows a free growth term doing worse out of sample, which is why the tilt is capped.' }));
+
+    // Model selection: every candidate, winner and losers, from fit.js.
+    sec.appendChild(el('h3', { text: 'Model selection — five candidates, scored out of sample' }));
+    sec.appendChild(el('p', { text: 'The winner is the highest mean of time-split R\u00B2 and 5-fold mean R\u00B2. The pooled curve is the reference; the category curves win by a small margin on the folds and tie on the time split; adding log(1 + chain count) makes both worse, and its fitted coefficient is ' + fmtNum(FIT.chains_coef, 3) + ' — essentially zero — so the chain feature is rejected, not used. The Huber robust fit over all 128 usable comparables is far worse out of sample than the hard trim, so the trim stays.' }));
+    var candBody = el('tbody');
+    (FIT.candidates || []).forEach(function (c) {
+      candBody.appendChild(el('tr', { class: 'plain' },
+        el('td', null, el('b', { text: c.name }), c.name === FIT.chosen_model ? el('span', { class: 'watch', text: 'CHOSEN' }) : null),
+        el('td', { class: 'num', text: fmtR2(c.in_r2) }),
+        el('td', { class: 'num', text: fmtR2(c.time_r2) }),
+        el('td', { class: 'num', text: c.time_med_ape === null ? 'n/a' : Math.round(c.time_med_ape * 100) + '%' }),
+        el('td', { class: 'num', text: fmtR2(c.fold_r2) }),
+        el('td', { class: 'num', text: c.fold_med_ape === null ? 'n/a' : Math.round(c.fold_med_ape * 100) + '%' }),
+        el('td', { class: 'num', text: fmtR2(c.combined) })
+      ));
+    });
+    sec.appendChild(el('div', { class: 'table-wrap' },
+      el('table', { class: 'valid' },
+        el('caption', { text: 'Candidate size models. Combined is the mean of time-split R\u00B2 and 5-fold mean R\u00B2. Median APE is the median absolute percentage error.' }),
+        el('thead', null, el('tr', null,
+          el('th', { scope: 'col', text: 'Candidate' }),
+          el('th', { scope: 'col', class: 'num', text: 'In-sample R²' }),
+          el('th', { scope: 'col', class: 'num', text: 'Time-split R²' }),
+          el('th', { scope: 'col', class: 'num', text: 'Time med APE' }),
+          el('th', { scope: 'col', class: 'num', text: '5-fold R²' }),
+          el('th', { scope: 'col', class: 'num', text: '5-fold med APE' }),
+          el('th', { scope: 'col', class: 'num', text: 'Combined' })
+        )),
+        candBody
+      )
+    ));
+    if (FIT.curves && FIT.curves.length) {
+      var curveBody = el('tbody');
+      FIT.curves.forEach(function (cv) {
+        curveBody.appendChild(el('tr', { class: 'plain' },
+          el('td', { text: cv.category }),
+          el('td', { class: 'num', text: String(cv.n) }),
+          el('td', { class: 'num', text: fmtNum(cv.weight, 2) }),
+          el('td', { class: 'num', text: fmtNum(cv.intercept, 3) }),
+          el('td', { class: 'num', text: fmtNum(cv.slope, 3) })
+        ));
+      });
+      sec.appendChild(el('h3', { text: 'Per-category curves (shrunk toward pooled)' }));
+      sec.appendChild(el('p', { text: 'Only categories with at least ten trimmed comparables earn their own curve. Each is blended with the pooled curve at weight n / (n + 10), so a small category cannot pull far from the pooled line. Categories not listed here are valued on the pooled curve.' }));
+      sec.appendChild(el('div', { class: 'table-wrap' },
+        el('table', { class: 'valid' },
+          el('caption', { text: 'Fitted per-category curves. Weight is the share of the category\u2019s own fit in the blend.' }),
+          el('thead', null, el('tr', null,
+            el('th', { scope: 'col', text: 'Category' }),
+            el('th', { scope: 'col', class: 'num', text: 'Comps' }),
+            el('th', { scope: 'col', class: 'num', text: 'Weight' }),
+            el('th', { scope: 'col', class: 'num', text: 'Intercept' }),
+            el('th', { scope: 'col', class: 'num', text: 'Slope' })
+          )),
+          curveBody
+        )
+      ));
+    }
+
+    // Validation of the winning model.
     sec.appendChild(el('h3', { text: 'Validation — how honest the curve is' }));
     sec.appendChild(el('div', { class: 'table-wrap' },
       el('table', { class: 'valid' },
-        el('caption', { text: 'Fit and out-of-sample checks, all read from fit.js. Median APE is the median absolute percentage error.' }),
+        el('caption', { text: 'Fit and out-of-sample checks of the chosen model, all read from fit.js.' }),
         el('thead', null, el('tr', null,
           el('th', { scope: 'col', text: 'Check' }),
           el('th', { scope: 'col', class: 'num', text: 'R²' }),
@@ -316,25 +393,38 @@
           el('tr', { class: 'plain' },
             el('td', { text: 'Time split (fit before ' + FIT.time_split_cut + ')' }),
             el('td', { class: 'num', text: fmtR2(FIT.time_r2) }),
-            el('td', { class: 'num', text: Math.round(FIT.time_med_ape * 100) + '%' }),
+            el('td', { class: 'num', text: FIT.time_med_ape === null ? 'n/a' : Math.round(FIT.time_med_ape * 100) + '%' }),
             el('td', { text: 'Train ' + FIT.time_train_n + ', test ' + FIT.time_test_n + '; median bias ×' + fmtNum(FIT.time_med_bias) })
           ),
           el('tr', { class: 'plain' },
             el('td', { text: 'Time split, growth left free' }),
             el('td', { class: 'num', text: fmtR2(FIT.time_growth_r2) }),
-            el('td', { class: 'num', text: Math.round(FIT.time_growth_med_ape * 100) + '%' }),
+            el('td', { class: 'num', text: FIT.time_growth_med_ape === null ? 'n/a' : Math.round(FIT.time_growth_med_ape * 100) + '%' }),
             el('td', { text: 'Worse than the capped tilt — the reason the tilt is capped' })
           ),
           el('tr', { class: 'plain' },
             el('td', { text: '5-fold cross-validation (mean)' }),
             el('td', { class: 'num', text: fmtR2(FIT.fold_r2_mean) }),
-            el('td', { class: 'num', text: Math.round(FIT.fold_med_ape_mean * 100) + '%' }),
+            el('td', { class: 'num', text: FIT.fold_med_ape_mean === null ? 'n/a' : Math.round(FIT.fold_med_ape_mean * 100) + '%' }),
             el('td', { text: 'Mean across the five folds' })
           )
         )
       )
     ));
     sec.appendChild(el('p', { class: 'note' }, 'Read these numbers as an order of magnitude, not a dollar figure. Token multiples spread over more than one order of magnitude even after size is accounted for — the median error above is around three quarters — so every row carries a wide 90% range and the rank, not the dollar figure, is the claim.'));
+
+    // Bootstrap stability.
+    if (FIT.bootstrap) {
+      var top = DATA.rows[0];
+      sec.appendChild(el('h3', { text: 'Bootstrap stability — how much the ranks move' }));
+      sec.appendChild(el('p', { text: 'The winning model was refitted on ' + FIT.bootstrap.n + ' bootstrap resamples of the ' + FIT.comps_fitted + ' trimmed comparables (seed ' + FIT.bootstrap.seed + ', ' + FIT.bootstrap.resamples_used + ' resamples used). Across the top 20 rows the bootstrap median rank sits on average ' + fmtNum(FIT.bootstrap.mean_abs_rank_shift_top20, 2) + ' places from the published rank, and the median 5th–95th percentile rank width is ' + FIT.bootstrap.median_rank_width_top20 + ' places — ranks near the top are stable, ranks further down move more. The top row\u2019s own bootstrap rank range is ' + top.boot_rank_low + '–' + top.boot_rank_high + ', and its bootstrap implied range is ' + fmtUsd(top.boot_low_usd) + ' – ' + fmtUsd(top.boot_high_usd) + ': it is valued on the ' + top.curve + ' curve, fitted on only a handful of comparables, so its rank 1 is a claim with a wide range, not a certainty. Every row\u2019s bootstrap range is shown in its detail view.' }));
+    }
+
+    // Farm economics: assumption vs policy, stated as such.
+    sec.appendChild(el('h3', { text: 'Farm economics — what is assumed, what is policy' }));
+    sec.appendChild(el('p', { text: 'Each row\u2019s farm cost is the plan\u2019s capital plus the gas of every transaction the plan implies — a computed number, from the protocol\u2019s own TVL tier, chain and hold. The break-even share is that cost divided by the implied value: the share of the implied value a farmer must capture to cover the farm. The net value assumes, as a stated low-end assumption and not a fitted number, that the farmer captures ' + Math.round(FIT.farm_share_low * 100) + '% of the implied value, then subtracts the farm cost. The verdict is a decision policy on the break-even share: FARM when the whole farm costs at most ' + fmtBp(FIT.verdict_farm_max) + ' of implied value, THIN up to ' + fmtBp(FIT.verdict_thin_max) + ', SKIP above. The thresholds are round policy numbers, stated here and in fit.js, and the counts they produce are ' + FIT.verdicts.farm + ' FARM, ' + FIT.verdicts.thin + ' THIN and ' + FIT.verdicts.skip + ' SKIP. A FARM verdict does not promise an airdrop — it says the farm is cheap next to the value the model claims.' }));
+    sec.appendChild(el('h3', { text: 'What this model cannot do' }));
+    sec.appendChild(el('p', { text: 'It cannot say whether or when a protocol issues a token, and it cannot price one precisely: the out-of-sample median error is about 74%, and the bootstrap shows ranks moving by double-digit places further down the board. It cannot see anything outside the snapshot — no team, no tokenomics, no points program, no social signal — and a protocol the snapshot records as pre-token may still have a token its DefiLlama record does not carry. The farm plans assume the protocol\u2019s own app works as its listing describes, and the 1% low-end share is an assumption, not a measurement. Use the board to choose where to look, not as a price.' }));
     sec.appendChild(methodFoot());
     return sec;
   }
@@ -372,19 +462,39 @@
         el('div', null, el('span', { text: 'Token on record' }), el('b', { class: 'plain', text: 'none — pre-token' }))
       )
     ));
-    // Radar-3.0 breakdown, from the row's own fitted components: the size
-    // value is the curve read at this TVL, the tilt is the capped growth
-    // multiplier, and the interval is the 90% range from the comps' scatter.
+    // Model breakdown, from the row's own fitted components: the size value is
+    // the curve read at this TVL, the tilt is the capped growth multiplier, the
+    // interval is the 90% range from the comps' scatter, and the bootstrap
+    // range is the 5th–95th percentile over 200 refits.
     dialog.appendChild(el('section', { class: 'd-section' },
       el('h3', { text: 'Model breakdown' }),
       el('div', { class: 'rows' },
         el('div', null, el('span', { text: 'Size value (curve at this TVL)' }), el('b', { text: fmtUsd(row.size_value_usd) })),
+        el('div', null, el('span', { text: 'Curve used' }), el('b', { class: 'plain', text: row.curve === 'pooled' ? 'pooled' : row.curve + ' (shrunk toward pooled)' })),
         el('div', null, el('span', { text: 'Growth tilt' }), el('b', { text: '× ' + fmtNum(row.growth_tilt, 4) })),
         el('div', null, el('span', { text: 'Age weight' }), el('b', { text: '× 1.00 — age does not move value' })),
         el('div', null, el('span', { text: 'Implied value' }), el('b', { text: fmtUsd(row.implied_value_usd) })),
-        el('div', null, el('span', { text: '90% interval' }), el('b', { text: fmtUsd(row.interval_low_usd) + ' – ' + fmtUsd(row.interval_high_usd) }))
+        el('div', null, el('span', { text: '90% interval' }), el('b', { text: fmtUsd(row.interval_low_usd) + ' – ' + fmtUsd(row.interval_high_usd) })),
+        el('div', null, el('span', { text: 'Bootstrap rank range (5–95%)' }), el('b', { text: 'rank ' + row.boot_rank_low + ' – ' + row.boot_rank_high + ' of ' + DATA.board_size })),
+        el('div', null, el('span', { text: 'Bootstrap implied range (5–95%)' }), el('b', { text: fmtUsd(row.boot_low_usd) + ' – ' + fmtUsd(row.boot_high_usd) }))
       ),
-      el('p', { text: 'Model ' + DATA.model_version + ': the implied value above is the value the board carries for this row, shown exactly as stated. The interval is wide on purpose — see the methodology. An estimate of an order of magnitude, not a price.' })
+      el('p', { text: 'Model ' + DATA.model_version + ': the implied value above is the value the board carries for this row, shown exactly as stated. The interval is wide on purpose — see the research note. An estimate of an order of magnitude, not a price.' })
+    ));
+    // Farm economics: computed cost, break-even share, net under the stated
+    // 1% low-end assumption, and the verdict from the stated policy.
+    var sharePct = FIT ? Math.round(FIT.farm_share_low * 100) + '%' : '1%';
+    var shareNote = FIT
+      ? 'The net value assumes the farmer captures ' + sharePct + ' of the implied value — a stated low-end assumption, not a fitted number — then subtracts the farm cost. Verdict policy: FARM at or below ' + fmtBp(FIT.verdict_farm_max) + ' of implied value, THIN up to ' + fmtBp(FIT.verdict_thin_max) + ', SKIP above.'
+      : '';
+    dialog.appendChild(el('section', { class: 'd-section' },
+      el('h3', { text: 'Farm economics — verdict ' + verdictOf(row) }),
+      el('div', { class: 'rows' },
+        el('div', null, el('span', { text: 'Farm cost (capital + gas)' }), el('b', { text: fmtUsd(row.farm_total_cost_usd) })),
+        el('div', null, el('span', { text: 'Break-even share' }), el('b', { text: fmtBp(row.farm_break_even_share) + ' (' + fmtShare(row.farm_break_even_share) + ')' })),
+        el('div', null, el('span', { text: 'Net value at stated ' + sharePct + ' share' }), el('b', { text: fmtUsd(row.farm_net_low_usd) })),
+        el('div', null, el('span', { text: 'Verdict' }), el('b', { class: 'plain', text: verdictOf(row) }))
+      ),
+      el('p', { text: shareNote })
     ));
     // Farm plan, verbatim from the board: the eight steps live in
     // row.farm_steps (carried by data.js from board.json) and are shown here
@@ -422,7 +532,7 @@
     shell.appendChild(el('div', { id: 'boardwrap' }, boardTable()));
     shell.appendChild(liveSection());
     shell.appendChild(el('div', { class: 'section-head' }, el('h2', { text: 'Methodology' })));
-    shell.appendChild(methodSection());
+    shell.appendChild(researchSection());
     shell.appendChild(el('footer', { class: 'foot', text: 'Token Radar · snapshot ' + DATA.as_of + ' · source DefiLlama · model ' + DATA.model_version + ' · ' + DATA.board_size + ' pre-token rows, ' + DATA.live_size + ' live-token protocols set aside.' }));
     app.appendChild(shell);
     app.setAttribute('aria-busy', 'false');

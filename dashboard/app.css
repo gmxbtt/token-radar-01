@@ -85,6 +85,10 @@ tbody tr:last-child td { border-bottom: 0; }
 .pos { color: var(--accent); }
 .neg { color: var(--negative); }
 .watch { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: 11px; font-weight: 700; vertical-align: 1px; white-space: nowrap; }
+.verdict { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: .04em; white-space: nowrap; }
+.v-farm { background: var(--accent); color: var(--accent-ink); }
+.v-thin { background: #e8b93e; color: #241a02; }
+.v-skip { background: var(--negative); color: #2b0d0a; }
 .bar { width: 110px; height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
 .bar i { display: block; height: 100%; background: var(--accent); }
 .implied { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }

@@ -1,6 +1,6 @@
 // token-radar-01: the entry's driver (Node 22, standard library only).
 //
-// It reads the sealed snapshot from /input/snapshot.json (or --input <file|dir>), fits the radar-3.0
+// It reads the sealed snapshot from /input/snapshot.json (or --input <file|dir>), fits the radar-4.0
 // model to the snapshot's own comparables in lib/model.ts, and writes the ranked board to
 // /output/board.json plus the dashboard's data to /output/data.js and the fit's record to
 // /output/dashboard/fit.js — the fit is computed at run time, and fit.js is how the judge reads it
@@ -119,7 +119,8 @@ function main(): void {
 
   process.stdout.write(
     `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored (${radar.early_size} early, ${radar.live_size} live set aside)\n` +
-      `token radar: fit on ${fit.comps_fitted} comps (of ${fit.comps_total} with a token; ${fit.comps_zero_mcap} zero market cap, ${fit.comps_trimmed} trimmed): log mcap = ${fit.size_intercept} + ${fit.size_slope} x log TVL, in-sample R2 ${fit.r2_in}, time-split R2 ${fit.time_r2}, median APE ${fit.time_med_ape}\n` +
+      `token radar: fit on ${fit.comps_fitted} comps (of ${fit.comps_total} with a token; ${fit.comps_zero_mcap} zero market cap, ${fit.comps_trimmed} trimmed): chosen model ${fit.chosen_model} (pooled reference log mcap = ${fit.size_intercept} + ${fit.size_slope} x log TVL), in-sample R2 ${fit.r2_in}, time-split R2 ${fit.time_r2}, median APE ${fit.time_med_ape}\n` +
+      `token radar: candidates: ${fit.candidates.map((c) => `${c.name} combined ${c.combined}`).join(', ')}; bootstrap ${fit.bootstrap?.resamples_used ?? 0}/${fit.bootstrap?.n ?? 0} resamples, mean |rank shift| top 20 ${fit.bootstrap?.mean_abs_rank_shift_top20 ?? 'n/a'}; verdicts FARM ${fit.verdicts.farm} / THIN ${fit.verdicts.thin} / SKIP ${fit.verdicts.skip}\n` +
       `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (${dashboard.length + 1} files, incl. fit.js), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
   );
 }
