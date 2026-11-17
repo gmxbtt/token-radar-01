@@ -1,4 +1,4 @@
-// Token Radar dashboard (radar-4.0). Reads window.RADAR (data.js, one level up)
+// Token Radar dashboard (radar-5.0). Reads window.RADAR (data.js, one level up)
 // and window.FIT (fit.js, beside this file) and renders the ranked pre-token
 // board with farm verdicts, filters, a per-protocol detail view, the separate
 // live-token section and the research note. No network: no fetch, no external
@@ -130,6 +130,7 @@
         el('div', { class: 'stat' }, el('span', { text: 'Board rows' }), el('b', { text: String(DATA.board_size) })),
         el('div', { class: 'stat' }, el('span', { text: 'Watchlist covered' }), el('b', { class: 'accent', text: DATA.watchlist_size + ' / ' + DATA.watchlist_size })),
         el('div', { class: 'stat' }, el('span', { text: 'In-sample R\u00B2 (chosen model)' }), el('b', { text: FIT ? fmtR2(FIT.r2_in) : 'n/a' })),
+        el('div', { class: 'stat' }, el('span', { text: 'Leave-one-out median miss' }), el('b', { text: FIT && FIT.loo_med_miss !== null && FIT.loo_med_miss !== undefined ? '\u00D7' + fmtNum(FIT.loo_med_miss, 2) : 'n/a' })),
         el('div', { class: 'stat' }, el('span', { text: 'FARM verdicts' }), el('b', { class: 'accent', text: farmCount === null ? 'n/a' : farmCount + ' of ' + DATA.board_size }))
       )
     );
@@ -281,9 +282,84 @@
     );
   }
 
+  // Farm next: the five FARM rows with the best net value per hands-on hour. The net
+  // uses the same stated 1% low-end share as the verdicts; the hours are the plan's
+  // hands-on hours (step times plus ten minutes per week of the hold).
+  function farmNext() {
+    var best = DATA.rows.filter(function (r) { return verdictOf(r) === 'FARM'; })
+      .sort(function (a, b) { return (b.farm_net_low_per_hour_usd || 0) - (a.farm_net_low_per_hour_usd || 0); })
+      .slice(0, 5);
+    if (best.length === 0) return null;
+    var tbody = el('tbody');
+    best.forEach(function (r) {
+      tbody.appendChild(el('tr', { class: 'plain' },
+        el('td', { class: 'num', text: String(r.rank) }),
+        el('td', null, el('div', { class: 'name' }, el('b', { text: r.name }), el('div', { class: 'sub', text: r.slug }))),
+        el('td', { class: 'num', text: fmtUsd(r.implied_value_usd) }),
+        el('td', { class: 'num', text: fmtUsd(r.farm_net_low_usd) }),
+        el('td', { class: 'num', text: (r.farm_hands_on_hours === null || r.farm_hands_on_hours === undefined ? 'n/a' : fmtNum(r.farm_hands_on_hours, 2) + ' h') }),
+        el('td', { class: 'num', text: fmtUsd(r.farm_net_low_per_hour_usd) + ' / h' })
+      ));
+    });
+    return el('section', null,
+      el('div', { class: 'section-head' },
+        el('h2', { text: 'Farm next — best net value per hands-on hour' }),
+        el('span', { class: 'badge-live', text: 'FARM only' })
+      ),
+      el('p', { class: 'live-note', text: 'Net value is the stated 1% share of implied value minus the farm cost; the hours are the plan\u2019s hands-on hours.' }),
+      el('div', { class: 'panel' },
+        el('div', { class: 'table-wrap' },
+          el('table', null,
+            el('caption', { text: 'The five FARM rows with the best net value per hands-on hour.' }),
+            el('thead', null, el('tr', null,
+              el('th', { scope: 'col', class: 'num', text: 'Rank' }), el('th', { scope: 'col', text: 'Protocol' }),
+              el('th', { scope: 'col', class: 'num', text: 'Implied value' }), el('th', { scope: 'col', class: 'num', text: 'Net value' }),
+              el('th', { scope: 'col', class: 'num', text: 'Hands-on' }), el('th', { scope: 'col', class: 'num', text: 'Net per hour' })
+            )),
+            tbody
+          )
+        )
+      )
+    );
+  }
+
   // Research note, rendered from window.FIT (fit.js) and DATA.model_rationale:
   // every fit number below comes from the data, so a refit needs no page edit.
   // If fit.js failed to load, the section degrades to the rationale alone.
+  // The market line as an inline SVG: one dot per trimmed comparable (log market cap
+  // against log TVL) and the pooled curve through them, drawn from FIT.market_line.
+  function marketLineSvg() {
+    var ml = FIT && FIT.market_line ? FIT.market_line : null;
+    if (!ml || !ml.points || ml.points.length < 2) return null;
+    var W = 640, H = 340, L = 58, R = 18, T = 16, B = 42;
+    var xs = ml.points.map(function (p) { return p[0]; });
+    var ys = ml.points.map(function (p) { return p[1]; });
+    var x0 = Math.min.apply(null, xs) - 0.4, x1 = Math.max.apply(null, xs) + 0.4;
+    var y0 = Math.min.apply(null, ys) - 0.4, y1 = Math.max.apply(null, ys) + 0.4;
+    var X = function (v) { return (L + ((v - x0) / (x1 - x0)) * (W - L - R)).toFixed(1); };
+    var Y = function (v) { return (H - B - ((v - y0) / (y1 - y0)) * (H - T - B)).toFixed(1); };
+    function usd(lv) {
+      var v = Math.exp(lv);
+      if (v >= 1e9) return '$' + (v / 1e9).toFixed(1) + 'B';
+      if (v >= 1e6) return '$' + Math.round(v / 1e6) + 'M';
+      return '$' + Math.round(v / 1e3) + 'K';
+    }
+    var s = ['<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Log market cap against log TVL for the trimmed comparables, with the pooled curve">'];
+    s.push('<clipPath id="mlclip"><rect x="' + L + '" y="' + T + '" width="' + (W - L - R) + '" height="' + (H - T - B) + '"/></clipPath>');
+    var g;
+    for (g = Math.ceil(x0); g <= x1; g++) {
+      s.push('<line x1="' + X(g) + '" y1="' + Y(y0) + '" x2="' + X(g) + '" y2="' + Y(y1) + '" stroke="#22332d"/><text x="' + X(g) + '" y="' + (H - 24) + '" fill="#8fa89e" font-size="11" text-anchor="middle">' + usd(g) + '</text>');
+    }
+    for (g = Math.ceil(y0); g <= y1; g++) {
+      s.push('<line x1="' + X(x0) + '" y1="' + Y(g) + '" x2="' + X(x1) + '" y2="' + Y(g) + '" stroke="#22332d"/><text x="' + (L - 8) + '" y="' + (+Y(g) + 4) + '" fill="#8fa89e" font-size="11" text-anchor="end">' + usd(g) + '</text>');
+    }
+    s.push('<text x="' + ((W - L - R) / 2 + L).toFixed(1) + '" y="' + (H - 6) + '" fill="#8fa89e" font-size="12" text-anchor="middle">TVL, log scale</text>');
+    s.push('<g clip-path="url(#mlclip)"><line x1="' + X(x0) + '" y1="' + Y(ml.intercept + ml.slope * x0) + '" x2="' + X(x1) + '" y2="' + Y(ml.intercept + ml.slope * x1) + '" stroke="#2fd6a3" stroke-width="2"/>');
+    ml.points.forEach(function (p) { s.push('<circle cx="' + X(p[0]) + '" cy="' + Y(p[1]) + '" r="3" fill="#2fd6a3" fill-opacity="0.55"/>'); });
+    s.push('</g></svg>');
+    return s.join('');
+  }
+
   function researchSection() {
     var sec = el('section', { class: 'panel method' },
       el('h2', { text: 'Research note — how this radar works, and what it cannot do' }),
@@ -295,9 +371,29 @@
       return sec;
     }
     sec.appendChild(el('div', { class: 'formula' },
-      el('b', { text: 'Chosen model: ' + FIT.chosen_model + ' — ln(implied value) = category curve at ln(TVL), shrunk toward pooled ln(mcap) = ' + fmtNum(FIT.pooled_intercept, 4) + ' + ' + fmtNum(FIT.pooled_slope, 3) + ' × ln(TVL), then × growth tilt' })
+      el('b', { text: 'Chosen model: ' + FIT.chosen_model + ' — ln(implied value) = range-gated category curve at ln(TVL), shrunk toward pooled ln(mcap) = ' + fmtNum(FIT.pooled_intercept, 4) + ' + ' + fmtNum(FIT.pooled_slope, 3) + ' × ln(TVL), then × growth tilt' })
     ));
     sec.appendChild(el('p', { text: 'The size curve is a regression of log market cap on log TVL (natural logs), fitted to the snapshot itself. A protocol\u2019s size value is the curve read at its TVL; the growth tilt then nudges it up or down by the week\u2019s TVL change. The curve is the whole size story: a protocol twice as large in TVL is not twice as valuable — the slope below one means implied value grows more slowly than TVL.' }));
+    var scatter = marketLineSvg();
+    if (scatter) {
+      sec.appendChild(el('h3', { text: 'The market line — the fit, drawn' }));
+      var scatterBox = el('div', { class: 'scatter' });
+      scatterBox.innerHTML = scatter;
+      sec.appendChild(scatterBox);
+      sec.appendChild(el('p', { text: 'Each dot is one of the ' + (FIT.market_line ? FIT.market_line.points.length : 0) + ' trimmed comparables, log market cap against log TVL; the line is the pooled curve. The dots spread over more than an order of magnitude around the line even after size is accounted for — that spread is the 90% interval on every row, and the reason the rank, not the dollar figure, is the claim.' }));
+    }
+    // The range gate, with the one row it moves: the Dexs curve's fitted TVL range
+    // against bittensor-dtao's TVL and its decayed weight, all from the data.
+    var gateCurve = null, gateRow = null;
+    (FIT.curves || []).forEach(function (cv) { if (cv.category === 'Dexs') gateCurve = cv; });
+    DATA.rows.forEach(function (r) { if (r.slug === 'bittensor-dtao') gateRow = r; });
+    if (gateCurve && gateRow) {
+      var gateD = gateRow.tvl_usd > gateCurve.range_hi_tvl_usd
+        ? Math.log(gateRow.tvl_usd) - Math.log(gateCurve.range_hi_tvl_usd)
+        : Math.log(gateCurve.range_lo_tvl_usd) - Math.log(gateRow.tvl_usd);
+      sec.appendChild(el('h3', { text: 'The range gate — a curve is trusted only where its data is' }));
+      sec.appendChild(el('p', { text: 'A category curve is trusted only inside the TVL range its own comparables span. Outside it, its weight decays as exp(−d\u00B2 / 2\u03C3\u00B2) in log TVL, \u03C3 = ' + fmtNum(FIT.range_decay_sigma, 1) + ', so the pooled curve takes over instead of a steep small-sample curve being extrapolated far beyond its data. The gate moves exactly one row: the Dexs curve is fitted on comparables from ' + fmtUsd(gateCurve.range_lo_tvl_usd) + ' to ' + fmtUsd(gateCurve.range_hi_tvl_usd) + ' of TVL, and bittensor-dtao holds ' + fmtUsd(gateRow.tvl_usd) + ' — about ' + fmtNum(gateD, 1) + ' log-units beyond that range — so its Dexs weight decays to ' + fmtNum(gateRow.curve_weight, 2) + ' and it is valued almost entirely on the pooled curve, at ' + fmtUsd(gateRow.implied_value_usd) + ' and rank ' + gateRow.rank + ' instead of the $264M rank 1 the ungated Dexs curve gave it in radar-4.0. The gate changes no out-of-sample score — the comparables sit inside their own ranges by construction — so it is a guard against extrapolation, not a fit improvement.' }));
+    }
     sec.appendChild(el('ul', { class: 'consts' },
       el('li', null, el('span', { text: 'Comparables in snapshot' }), el('b', { text: String(FIT.comps_total) })),
       el('li', null, el('span', { text: 'Usable (positive market cap)' }), el('b', { text: String(FIT.comps_usable) })),
@@ -308,6 +404,7 @@
       el('li', null, el('span', { text: 'Pooled slope' }), el('b', { text: fmtNum(FIT.pooled_slope, 3) })),
       el('li', null, el('span', { text: 'Growth coefficient (fitted)' }), el('b', { text: fmtNum(FIT.growth_coef_raw, 3) })),
       el('li', null, el('span', { text: 'Growth tilt cap' }), el('b', { text: '×' + fmtNum(FIT.growth_tilt_low) + ' – ×' + fmtNum(FIT.growth_tilt_high) })),
+      el('li', null, el('span', { text: 'Category range-decay \u03C3 (log TVL)' }), el('b', { text: FIT.range_decay_sigma === null || FIT.range_decay_sigma === undefined ? 'n/a' : fmtNum(FIT.range_decay_sigma, 1) })),
       el('li', null, el('span', { text: 'Age coefficient (fitted)' }), el('b', { text: fmtNum(FIT.age_coef, 3) })),
       el('li', null, el('span', { text: 'Chain-count coefficient' }), el('b', { text: fmtNum(FIT.chains_coef, 3) })),
       el('li', null, el('span', { text: 'Bootstrap resamples' }), el('b', { text: FIT.bootstrap ? String(FIT.bootstrap.n) : 'n/a' }))
@@ -317,6 +414,8 @@
     // Model selection: every candidate, winner and losers, from fit.js.
     sec.appendChild(el('h3', { text: 'Model selection — five candidates, scored out of sample' }));
     sec.appendChild(el('p', { text: 'The winner is the highest mean of time-split R\u00B2 and 5-fold mean R\u00B2. The pooled curve is the reference; the category curves win by a small margin on the folds and tie on the time split; adding log(1 + chain count) makes both worse, and its fitted coefficient is ' + fmtNum(FIT.chains_coef, 3) + ' — essentially zero — so the chain feature is rejected, not used. The Huber robust fit over all 128 usable comparables is far worse out of sample than the hard trim, so the trim stays.' }));
+    sec.appendChild(el('h3', { text: 'What was tried and rejected' }));
+    sec.appendChild(el('p', { text: 'The search did not stop at the five candidates above. Also tried on the same time-split and 5-fold protocol and rejected: growth and age as joint value features, a quadratic size term, a nearest-neighbour peer curve, winsorising instead of trimming, tighter trims, a Huber fit inside the categories, and a discount for protocols whose sibling token already trades. Each scored worse than the chosen model, so none is used. Age carries no signal among the comparables, and no pre-token row has a trading sibling to discount, so both ideas fail on the data, not on preference.' }));
     var candBody = el('tbody');
     (FIT.candidates || []).forEach(function (c) {
       candBody.appendChild(el('tr', { class: 'plain' },
@@ -352,11 +451,12 @@
           el('td', { class: 'num', text: String(cv.n) }),
           el('td', { class: 'num', text: fmtNum(cv.weight, 2) }),
           el('td', { class: 'num', text: fmtNum(cv.intercept, 3) }),
-          el('td', { class: 'num', text: fmtNum(cv.slope, 3) })
+          el('td', { class: 'num', text: fmtNum(cv.slope, 3) }),
+          el('td', { class: 'num', text: fmtUsd(cv.range_lo_tvl_usd) + ' – ' + fmtUsd(cv.range_hi_tvl_usd) })
         ));
       });
       sec.appendChild(el('h3', { text: 'Per-category curves (shrunk toward pooled)' }));
-      sec.appendChild(el('p', { text: 'Only categories with at least ten trimmed comparables earn their own curve. Each is blended with the pooled curve at weight n / (n + 10), so a small category cannot pull far from the pooled line. Categories not listed here are valued on the pooled curve.' }));
+      sec.appendChild(el('p', { text: 'Only categories with at least ten trimmed comparables earn their own curve. Each is blended with the pooled curve at weight n / (n + 10), so a small category cannot pull far from the pooled line. Categories not listed here are valued on the pooled curve. A curve is trusted only inside its fitted TVL range, shown in the table; outside it the weight decays toward zero and the pooled curve takes over — see the range gate above.' }));
       sec.appendChild(el('div', { class: 'table-wrap' },
         el('table', { class: 'valid' },
           el('caption', { text: 'Fitted per-category curves. Weight is the share of the category\u2019s own fit in the blend.' }),
@@ -365,7 +465,8 @@
             el('th', { scope: 'col', class: 'num', text: 'Comps' }),
             el('th', { scope: 'col', class: 'num', text: 'Weight' }),
             el('th', { scope: 'col', class: 'num', text: 'Intercept' }),
-            el('th', { scope: 'col', class: 'num', text: 'Slope' })
+            el('th', { scope: 'col', class: 'num', text: 'Slope' }),
+            el('th', { scope: 'col', text: 'Fit range (TVL)' })
           )),
           curveBody
         )
@@ -407,6 +508,12 @@
             el('td', { class: 'num', text: fmtR2(FIT.fold_r2_mean) }),
             el('td', { class: 'num', text: FIT.fold_med_ape_mean === null ? 'n/a' : Math.round(FIT.fold_med_ape_mean * 100) + '%' }),
             el('td', { text: 'Mean across the five folds' })
+          ),
+          el('tr', { class: 'plain' },
+            el('td', { text: 'Leave-one-out (one refit per comparable)' }),
+            el('td', { class: 'num', text: '\u2014' }),
+            el('td', { class: 'num', text: FIT.loo_med_ape === null || FIT.loo_med_ape === undefined ? 'n/a' : Math.round(FIT.loo_med_ape * 100) + '%' }),
+            el('td', { text: FIT.loo_med_miss === null || FIT.loo_med_miss === undefined ? 'n/a' : 'Median miss \u00D7' + fmtNum(FIT.loo_med_miss, 2) + '; within 3\u00D7 ' + Math.round((FIT.loo_within3 || 0) * 100) + '%, within 10\u00D7 ' + Math.round((FIT.loo_within10 || 0) * 100) + '%' })
           )
         )
       )
@@ -416,13 +523,16 @@
     // Bootstrap stability.
     if (FIT.bootstrap) {
       var top = DATA.rows[0];
+      var topCurveNote = top.curve === 'pooled'
+        ? 'it is valued on the pooled curve, fitted on all ' + FIT.comps_fitted + ' trimmed comparables — still a claim with a wide range, not a certainty.'
+        : 'it is valued on the ' + top.curve + ' curve at weight ' + fmtNum(top.curve_weight, 2) + ', so its rank 1 rests on a small category curve and is a claim with a wide range, not a certainty.';
       sec.appendChild(el('h3', { text: 'Bootstrap stability — how much the ranks move' }));
-      sec.appendChild(el('p', { text: 'The winning model was refitted on ' + FIT.bootstrap.n + ' bootstrap resamples of the ' + FIT.comps_fitted + ' trimmed comparables (seed ' + FIT.bootstrap.seed + ', ' + FIT.bootstrap.resamples_used + ' resamples used). Across the top 20 rows the bootstrap median rank sits on average ' + fmtNum(FIT.bootstrap.mean_abs_rank_shift_top20, 2) + ' places from the published rank, and the median 5th–95th percentile rank width is ' + FIT.bootstrap.median_rank_width_top20 + ' places — ranks near the top are stable, ranks further down move more. The top row\u2019s own bootstrap rank range is ' + top.boot_rank_low + '–' + top.boot_rank_high + ', and its bootstrap implied range is ' + fmtUsd(top.boot_low_usd) + ' – ' + fmtUsd(top.boot_high_usd) + ': it is valued on the ' + top.curve + ' curve, fitted on only a handful of comparables, so its rank 1 is a claim with a wide range, not a certainty. Every row\u2019s bootstrap range is shown in its detail view.' }));
+      sec.appendChild(el('p', { text: 'The winning model was refitted on ' + FIT.bootstrap.n + ' bootstrap resamples of the ' + FIT.comps_fitted + ' trimmed comparables (seed ' + FIT.bootstrap.seed + ', ' + FIT.bootstrap.resamples_used + ' resamples used). Across the top 20 rows the bootstrap median rank sits on average ' + fmtNum(FIT.bootstrap.mean_abs_rank_shift_top20, 2) + ' places from the published rank, and the median 5th–95th percentile rank width is ' + FIT.bootstrap.median_rank_width_top20 + ' places — ranks near the top are stable, ranks further down move more. The top row\u2019s own bootstrap rank range is ' + top.boot_rank_low + '–' + top.boot_rank_high + ', and its bootstrap implied range is ' + fmtUsd(top.boot_low_usd) + ' – ' + fmtUsd(top.boot_high_usd) + ': ' + topCurveNote + ' Every row\u2019s bootstrap range is shown in its detail view.' }));
     }
 
     // Farm economics: assumption vs policy, stated as such.
     sec.appendChild(el('h3', { text: 'Farm economics — what is assumed, what is policy' }));
-    sec.appendChild(el('p', { text: 'Each row\u2019s farm cost is the plan\u2019s capital plus the gas of every transaction the plan implies — a computed number, from the protocol\u2019s own TVL tier, chain and hold. The break-even share is that cost divided by the implied value: the share of the implied value a farmer must capture to cover the farm. The net value assumes, as a stated low-end assumption and not a fitted number, that the farmer captures ' + Math.round(FIT.farm_share_low * 100) + '% of the implied value, then subtracts the farm cost. The verdict is a decision policy on the break-even share: FARM when the whole farm costs at most ' + fmtBp(FIT.verdict_farm_max) + ' of implied value, THIN up to ' + fmtBp(FIT.verdict_thin_max) + ', SKIP above. The thresholds are round policy numbers, stated here and in fit.js, and the counts they produce are ' + FIT.verdicts.farm + ' FARM, ' + FIT.verdicts.thin + ' THIN and ' + FIT.verdicts.skip + ' SKIP. A FARM verdict does not promise an airdrop — it says the farm is cheap next to the value the model claims.' }));
+    sec.appendChild(el('p', { text: 'Each row\u2019s farm cost is the plan\u2019s capital plus the gas of every transaction the plan implies — a computed number, from the protocol\u2019s own TVL tier, chain and hold. The break-even share is that cost divided by the implied value: the share of the implied value a farmer must capture to cover the farm. The net value assumes, as a stated low-end assumption and not a fitted number, that the farmer captures ' + Math.round(FIT.farm_share_low * 100) + '% of the implied value, then subtracts the farm cost. The verdict is a decision policy on the break-even share: FARM when the whole farm costs at most ' + fmtBp(FIT.verdict_farm_max) + ' of implied value, THIN up to ' + fmtBp(FIT.verdict_thin_max) + ', SKIP above. The thresholds are round policy numbers, stated here and in fit.js, and the counts they produce are ' + FIT.verdicts.farm + ' FARM, ' + FIT.verdicts.thin + ' THIN and ' + FIT.verdicts.skip + ' SKIP. Each row also carries its net value per hands-on hour — the same net divided by the plan\u2019s hands-on hours — and the Farm next strip above names the five FARM rows with the best value per hour. A FARM verdict does not promise an airdrop — it says the farm is cheap next to the value the model claims.' }));
     sec.appendChild(el('h3', { text: 'What this model cannot do' }));
     sec.appendChild(el('p', { text: 'It cannot say whether or when a protocol issues a token, and it cannot price one precisely: the out-of-sample median error is about 74%, and the bootstrap shows ranks moving by double-digit places further down the board. It cannot see anything outside the snapshot — no team, no tokenomics, no points program, no social signal — and a protocol the snapshot records as pre-token may still have a token its DefiLlama record does not carry. The farm plans assume the protocol\u2019s own app works as its listing describes, and the 1% low-end share is an assumption, not a measurement. Use the board to choose where to look, not as a price.' }));
     sec.appendChild(methodFoot());
@@ -465,12 +575,21 @@
     // Model breakdown, from the row's own fitted components: the size value is
     // the curve read at this TVL, the tilt is the capped growth multiplier, the
     // interval is the 90% range from the comps' scatter, and the bootstrap
-    // range is the 5th–95th percentile over 200 refits.
+    // range is the 5th–95th percentile over 200 refits. The curve weight is the
+    // effective weight of the row's own category curve after the range gate: a
+    // weight near zero means the TVL sits outside its category's fitted range
+    // and the row is valued almost entirely on the pooled curve.
+    var curveLabel = row.curve === 'pooled'
+      ? 'pooled'
+      : (row.curve_weight !== null && row.curve_weight !== undefined && row.curve_weight < 0.1)
+        ? row.curve + ' (weight ' + fmtNum(row.curve_weight, 2) + ' — TVL outside its fit range, effectively pooled)'
+        : row.curve + ' (shrunk toward pooled)';
     dialog.appendChild(el('section', { class: 'd-section' },
       el('h3', { text: 'Model breakdown' }),
       el('div', { class: 'rows' },
         el('div', null, el('span', { text: 'Size value (curve at this TVL)' }), el('b', { text: fmtUsd(row.size_value_usd) })),
-        el('div', null, el('span', { text: 'Curve used' }), el('b', { class: 'plain', text: row.curve === 'pooled' ? 'pooled' : row.curve + ' (shrunk toward pooled)' })),
+        el('div', null, el('span', { text: 'Curve used' }), el('b', { class: 'plain', text: curveLabel })),
+        el('div', null, el('span', { text: 'Category-curve weight (after range gate)' }), el('b', { text: fmtNum(row.curve_weight, 2) })),
         el('div', null, el('span', { text: 'Growth tilt' }), el('b', { text: '× ' + fmtNum(row.growth_tilt, 4) })),
         el('div', null, el('span', { text: 'Age weight' }), el('b', { text: '× 1.00 — age does not move value' })),
         el('div', null, el('span', { text: 'Implied value' }), el('b', { text: fmtUsd(row.implied_value_usd) })),
@@ -492,6 +611,8 @@
         el('div', null, el('span', { text: 'Farm cost (capital + gas)' }), el('b', { text: fmtUsd(row.farm_total_cost_usd) })),
         el('div', null, el('span', { text: 'Break-even share' }), el('b', { text: fmtBp(row.farm_break_even_share) + ' (' + fmtShare(row.farm_break_even_share) + ')' })),
         el('div', null, el('span', { text: 'Net value at stated ' + sharePct + ' share' }), el('b', { text: fmtUsd(row.farm_net_low_usd) })),
+        el('div', null, el('span', { text: 'Hands-on time' }), el('b', { text: row.farm_hands_on_hours === null || row.farm_hands_on_hours === undefined ? 'n/a' : fmtNum(row.farm_hands_on_hours, 2) + ' hours' })),
+        el('div', null, el('span', { text: 'Net value per hands-on hour' }), el('b', { text: fmtUsd(row.farm_net_low_per_hour_usd) + ' / hour' })),
         el('div', null, el('span', { text: 'Verdict' }), el('b', { class: 'plain', text: verdictOf(row) }))
       ),
       el('p', { text: shareNote })
@@ -530,6 +651,8 @@
       el('p', { text: 'Pre-token protocols ranked by implied value. Click a column to sort; click a row for its detail.' })
     ));
     shell.appendChild(el('div', { id: 'boardwrap' }, boardTable()));
+    var next = farmNext();
+    if (next) shell.appendChild(next);
     shell.appendChild(liveSection());
     shell.appendChild(el('div', { class: 'section-head' }, el('h2', { text: 'Methodology' })));
     shell.appendChild(researchSection());

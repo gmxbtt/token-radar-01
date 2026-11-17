@@ -1,6 +1,6 @@
 // token-radar-01: the entry's driver (Node 22, standard library only).
 //
-// It reads the sealed snapshot from /input/snapshot.json (or --input <file|dir>), fits the radar-4.0
+// It reads the sealed snapshot from /input/snapshot.json (or --input <file|dir>), fits the radar-5.0
 // model to the snapshot's own comparables in lib/model.ts, and writes the ranked board to
 // /output/board.json plus the dashboard's data to /output/data.js and the fit's record to
 // /output/dashboard/fit.js — the fit is computed at run time, and fit.js is how the judge reads it

@@ -1,36 +1,29 @@
-// The token radar's model, radar-4: one snapshot of the protocol universe in, one ranked board out.
+// The token radar's model, radar-5: one snapshot of the protocol universe in, one ranked board out.
 //
-// radar-4 keeps radar-3's shape — a size curve fitted to the snapshot's own comparables, a capped
-// growth tilt, an honest out-of-sample report — and adds the four things radar-3 lacked:
+// radar-5 keeps radar-4's shape — a size curve fitted to the snapshot's own comparables, a capped
+// growth tilt, an honest out-of-sample report — and adds the three things radar-4 lacked:
 //
-//   1. Category curves with shrinkage. For every category with at least ten trimmed comparables the
-//      size curve is fitted to that category alone, then blended toward the pooled curve with weight
-//      n / (n + 10) (partial pooling: a 13-comp category keeps 57% of its own curve, the rest is the
-//      pooled curve; smaller categories use the pooled curve outright). Whether the category model
-//      is used at all is decided by out-of-sample score, not by preference — see the selection below.
-//   2. Model selection by out-of-sample score. Five candidate size models are fitted and scored on
-//      the same time-split and 5-fold checks: pooled on the trimmed set, category-shrunk on the
-//      trimmed set, each of those with log(1 + chain count) added as a third feature, and a
-//      Huber-style iteratively reweighted fit over all 128 usable comparables (no hard trim). The
-//      winner is the highest mean of time-split R^2 and 5-fold mean R^2; ties go to the earlier,
-//      simpler candidate. Every candidate's numbers are shipped in fit.js, so the choice is auditable.
-//   3. Bootstrap stability. The winning size model is refitted on 200 bootstrap resamples of the
-//      trimmed comparables (seeded RNG, so two runs are byte-identical). Every board row gets the
-//      5th–95th percentile range of its rank and of its implied value across the resamples, plus a
-//      board-level summary (mean absolute rank shift of the top 20). A rank that moves 40 places
-//      under resampling is not a precise claim, and the dashboard says so.
-//   4. Farm economics with a verdict. The farm plan's cost is already computed (capital + gas over
-//      every transaction the plan implies). New: the break-even share — total farm cost divided by
-//      implied value — and the net value under a stated low-end assumption (the farmer captures 1%
-//      of the implied value; that 1% is an assumption, written on the dashboard as one, never a
-//      fitted number). The verdict is a stated decision policy on the break-even share: FARM when
-//      the whole farm costs at most 0.1 basis points of implied value, THIN up to 0.5 basis points,
-//      SKIP above. The thresholds are policy, not fit, and are labelled as such.
+//   1. Range-gated category curves. A category curve is now trusted only inside the TVL range its
+//      own comparables span: outside that range its weight decays toward zero (a Gaussian decay in
+//      log TVL, sigma 0.7), so the pooled curve takes over instead of a steep small-sample curve
+//      being extrapolated far beyond its data. The gate changes no out-of-sample score — the
+//      comparables sit inside their own ranges by construction — and it moves exactly one board row:
+//      bittensor-dtao, whose $376M TVL sits 1.9 log-units beyond the Dexs comparables' $7–56M range,
+//      falls from rank 1 ($264M on the extrapolated Dexs curve) to rank 8 ($46M on the pooled
+//      curve). The gate is a guard against extrapolation, not a fit improvement, and the research
+//      note says so with the numbers.
+//   2. Leave-one-out validation. The winning model is refitted once per trimmed comparable held
+//      out, and the held-out error is reported as a median miss multiple and the share within 3x
+//      and 10x — the same language the strongest dashboards use, computed here rather than claimed.
+//   3. Farm value per hands-on hour. Every farm plan already states its step times; the plan's
+//      hands-on minutes are now totalled (step times plus ten minutes per week of the hold), and each
+//      row carries its net value per hands-on hour, so the board can name the best farm per hour of
+//      work, not only the biggest implied value.
 //
 // What is fitted, what is assumed and what is policy are kept apart throughout, and the dashboard's
 // research note says which is which. Nothing about the value model is a number somebody typed in,
-// except the shrinkage constant (10), the bootstrap count and seed, the 1% low-end share, and the
-// verdict thresholds — all four are disclosed in fit.js and on the page.
+// except the shrinkage constant (10), the range-decay sigma (0.7), the bootstrap count and seed, the
+// 1% low-end share, and the verdict thresholds — all five are disclosed in fit.js and on the page.
 //
 // The board covers every slug in the snapshot's watchlist (the floor, never a ceiling) and ranks
 // every other rankable pre-token protocol too. A protocol is pre-token when its record carries no
@@ -61,16 +54,18 @@ export interface Snapshot {
 }
 
 /** The model's version label: the dashboard names it and the rules quote it. */
-export const MODEL_VERSION = 'radar-4.0';
+export const MODEL_VERSION = 'radar-5.0';
 
 /** The value model in plain words, for the dashboard to show next to the formula. No fitted number
  *  is written here: the numbers live in fit.js, which the page reads at render time. */
 export const MODEL_RATIONALE =
   'Implied value comes from a size curve fitted to the snapshot itself: log market cap regressed on log TVL ' +
-  'over the token protocols whose market cap is positive. radar-4.0 fits that curve per category where a category ' +
-  'has enough comparables, shrunk toward the pooled curve, and only uses the category curves because they won the ' +
-  'out-of-sample comparison against the pooled curve, a chain-count feature and a Huber robust fit — the full ' +
-  'comparison, winner and losers, is in the research note below. A small growth tilt, fitted the same way and ' +
+  'over the token protocols whose market cap is positive. radar-5.0 fits that curve per category where a category ' +
+  'has enough comparables, shrunk toward the pooled curve — and a category curve is trusted only inside the TVL ' +
+  'range its own comparables span, decaying back to the pooled curve outside it, so no steep small-sample curve is ' +
+  'extrapolated far beyond its data. The category curves are used only because they won the out-of-sample comparison ' +
+  'against the pooled curve, a chain-count feature and a Huber robust fit — the full comparison, winner and losers, ' +
+  'is in the research note below, with a leave-one-out check of the winner. A small growth tilt, fitted the same way and ' +
   'capped, rewards a rising week without letting one spike crown a protocol; age was fitted too and its weight is ' +
   'indistinguishable from zero, so it is shown on every row and sets the farm hold, but it does not move the value. ' +
   'Out of sample the curve is honest, not precise: the median error is around three quarters, so every row carries ' +
@@ -114,6 +109,12 @@ export const MIN_CATEGORY_COMPS = 10;
 /** The shrinkage constant: a category curve's weight is n / (n + SHRINK_K) toward its own fit. */
 export const SHRINK_K = 10;
 
+/** The range gate's decay width, in log TVL: a category curve's weight outside its own comparables'
+ *  TVL range falls as exp(−d² / 2σ²), where d is the distance beyond the range in log TVL. At one
+ *  log-unit beyond the range the weight is 36% of its in-range value; at two, 2%. Disclosed, like the
+ *  shrinkage constant — it is a guard, not a fit. */
+export const RANGE_DECAY_SIGMA = 0.7;
+
 /** Bootstrap resamples of the trimmed comparables, and the seed that makes them reproducible. */
 export const BOOTSTRAP_N = 200;
 export const BOOTSTRAP_SEED = 20261117;
@@ -153,6 +154,10 @@ export interface CurveReport {
   weight: number;
   intercept: number;
   slope: number;
+  /** The fitted TVL range of this category's comparables, in dollars: the range the curve is
+   *  trusted over. Outside it, the weight decays toward zero and the pooled curve takes over. */
+  range_lo_tvl_usd: number;
+  range_hi_tvl_usd: number;
 }
 
 /** The bootstrap's board-level summary, for the research note. */
@@ -185,6 +190,9 @@ export interface FitReport {
   /** The pooled curve, kept as the reference even when a category model wins. */
   pooled_intercept: number;
   pooled_slope: number;
+  /** The range gate's decay width, in log TVL (RANGE_DECAY_SIGMA): a category curve's weight
+   *  outside its own comparables' TVL range falls as exp(−d² / 2σ²). */
+  range_decay_sigma: number;
   /** The pooled curve again, under the names main.ts prints. */
   size_intercept: number;
   size_slope: number;
@@ -211,6 +219,16 @@ export interface FitReport {
   time_growth_med_ape: number | null;
   fold_r2_mean: number | null;
   fold_med_ape_mean: number | null;
+  /** Leave-one-out validation of the winning model: one refit per trimmed comparable held out.
+   *  med_miss is the median |predicted / actual| multiple; within3 / within10 are the shares of
+   *  held-out comparables predicted within 3x and 10x. Null when the check could not run. */
+  loo_med_miss: number | null;
+  loo_within3: number | null;
+  loo_within10: number | null;
+  loo_med_ape: number | null;
+  /** The market line for the dashboard's scatter: the trimmed comparables as [log TVL, log mcap]
+   *  pairs, plus the pooled curve, so the page draws the fit instead of only describing it. */
+  market_line: { points: [number, number][]; intercept: number; slope: number };
   /** Filled in by buildRadar once the board exists: the bootstrap and the verdict counts. */
   bootstrap: BootstrapReport | null;
   verdicts: { farm: number; thin: number; skip: number };
@@ -253,6 +271,10 @@ export interface BoardRow {
     interval_high_usd: number;
     /** Which curve valued this row: its category, or 'pooled' when no category curve applies. */
     curve: string;
+    /** The effective weight of the row's own category curve after the range gate: 0 when the row is
+     *  valued on the pooled curve outright, near 0 when its TVL sits far outside its category's
+     *  fitted range, and the shrinkage weight when it sits inside. */
+    curve_weight: number;
     boot_rank_low: number;
     boot_rank_high: number;
     boot_low_usd: number;
@@ -267,6 +289,10 @@ export interface BoardRow {
   farm_break_even_share: number;
   /** Net value if the farmer captures the stated low-end share (1%) of the implied value, minus farm cost. */
   farm_net_low_usd: number;
+  /** Hands-on hours the farm plan takes (step times plus ten minutes per week of the hold). */
+  farm_hands_on_hours: number;
+  /** Net value per hands-on hour, under the same stated 1% low-end share. */
+  farm_net_low_per_hour_usd: number;
   farm_verdict: FarmVerdict;
 }
 
@@ -290,6 +316,7 @@ export interface RadarRow {
   interval_low_usd: number;
   interval_high_usd: number;
   curve: string;
+  curve_weight: number;
   boot_rank_low: number;
   boot_rank_high: number;
   boot_low_usd: number;
@@ -301,6 +328,8 @@ export interface RadarRow {
   farm_total_cost_usd: number;
   farm_break_even_share: number;
   farm_net_low_usd: number;
+  farm_hands_on_hours: number;
+  farm_net_low_per_hour_usd: number;
   farm_verdict: FarmVerdict;
 }
 
@@ -357,6 +386,8 @@ export function ageDays(asOf: string, listedAt: string | null): number | null {
 }
 
 const round4 = (n: number): number => Math.round(n * 1e4) / 1e4;
+
+const round3 = (n: number): number => Math.round(n * 1e3) / 1e3;
 
 /** The median of a list of numbers; null when the list is empty. */
 function median(values: number[]): number | null {
@@ -451,6 +482,10 @@ export interface SizeModel {
   curves: CurveReport[];
   /** Which curve values one protocol: its category, or 'pooled'. */
   curveOf: (p: SnapshotProtocol) => string;
+  /** The effective weight of one protocol's own category curve after the range gate: 0 when the
+   *  pooled curve values it, the shrinkage weight when its TVL sits inside its category's fitted
+   *  range, and decayed toward 0 the further outside that range it sits. */
+  weightOf: (p: SnapshotProtocol) => number;
 }
 
 /** A factory that fits a size model of one kind to a set of comparables. */
@@ -468,6 +503,7 @@ function pooledFactory(withChains: boolean): SizeFactory {
       pooledBeta: beta,
       curves: [],
       curveOf: () => 'pooled',
+      weightOf: () => 0,
     };
   };
 }
@@ -504,6 +540,7 @@ function huberFactory(withChains: boolean): SizeFactory {
       pooledBeta: finalBeta,
       curves: [],
       curveOf: () => 'pooled',
+      weightOf: () => 0,
     };
   };
 }
@@ -513,6 +550,14 @@ function huberFactory(withChains: boolean): SizeFactory {
  * blended toward the pooled curve with weight n / (n + SHRINK_K). Categories below the count use the
  * pooled curve outright. The blend is partial pooling: a category's own signal is kept, but a small
  * category cannot drag its curve far from the pooled one.
+ *
+ * The range gate: a category curve is trusted only inside the log-TVL range its own comparables
+ * span. Outside that range its weight decays as exp(−d² / 2σ²), σ = RANGE_DECAY_SIGMA, where d is
+ * the distance beyond the range in log TVL — so a steep curve fitted on small protocols is never
+ * extrapolated to a giant one. The gate is part of the model, so it applies in the candidate
+ * scoring, the bootstrap and the leave-one-out check alike; it moves no out-of-sample score,
+ * because the comparables sit inside their own ranges by construction, and it bites on the board
+ * only where a pre-token protocol's TVL lies outside its category's fitted range.
  */
 function categoryFactory(withChains: boolean): SizeFactory {
   return (data) => {
@@ -525,29 +570,51 @@ function categoryFactory(withChains: boolean): SizeFactory {
       list.push(p);
       byCategory.set(key, list);
     }
-    const curves = new Map<string, { beta: number[]; weight: number }>();
+    const curves = new Map<string, { beta: number[]; weight: number; lo: number; hi: number }>();
     const report: CurveReport[] = [];
     for (const [category, members] of [...byCategory.entries()].sort((a, b) => b[1].length - a[1].length)) {
       if (members.length < MIN_CATEGORY_COMPS) continue;
       const beta = olsWeighted(members.map((p) => featuresOf(p, withChains)), members.map((p) => Math.log(p.mcap_usd!)));
       if (beta === null) continue;
       const weight = members.length / (members.length + SHRINK_K);
-      curves.set(category, { beta, weight });
-      report.push({ category, n: members.length, weight: round4(weight), intercept: round4(beta[0]!), slope: round4(beta[1]!) });
+      const tvls = members.map((p) => Math.log(Math.max(p.tvl_usd, 1)));
+      const lo = Math.min(...tvls);
+      const hi = Math.max(...tvls);
+      curves.set(category, { beta, weight, lo, hi });
+      report.push({
+        category,
+        n: members.length,
+        weight: round4(weight),
+        intercept: round4(beta[0]!),
+        slope: round4(beta[1]!),
+        range_lo_tvl_usd: Math.round(Math.exp(lo)),
+        range_hi_tvl_usd: Math.round(Math.exp(hi)),
+      });
     }
     const predictOne = (beta: number[], p: SnapshotProtocol): number =>
       beta.reduce((s, b, i) => s + b * featuresOf(p, withChains)[i]!, 0);
+    // The effective weight of a protocol's own category curve after the range gate.
+    const weightAt = (own: { beta: number[]; weight: number; lo: number; hi: number }, p: SnapshotProtocol): number => {
+      const x = Math.log(Math.max(p.tvl_usd, 1));
+      const d = x < own.lo ? own.lo - x : x > own.hi ? x - own.hi : 0;
+      return own.weight * Math.exp(-(d * d) / (2 * RANGE_DECAY_SIGMA * RANGE_DECAY_SIGMA));
+    };
     return {
       kind: 'category',
       withChains,
       predict: (p) => {
         const own = curves.get(p.category ?? 'Other');
         if (own === undefined) return predictOne(pooled, p);
-        return own.weight * predictOne(own.beta, p) + (1 - own.weight) * predictOne(pooled, p);
+        const w = weightAt(own, p);
+        return w * predictOne(own.beta, p) + (1 - w) * predictOne(pooled, p);
       },
       pooledBeta: pooled,
       curves: report,
       curveOf: (p) => (curves.has(p.category ?? 'Other') ? (p.category ?? 'Other') : 'pooled'),
+      weightOf: (p) => {
+        const own = curves.get(p.category ?? 'Other');
+        return own === undefined ? 0 : round4(weightAt(own, p));
+      },
     };
   };
 }
@@ -644,6 +711,34 @@ function evaluateCandidate(name: string, kind: CandidateReport['kind'], withChai
   };
 }
 
+/** Leave-one-out validation of one fitted model: refit once per comparable held out, predict the
+ *  held-out one, and report the miss multiple. The gate is part of the model, so a held-out
+ *  comparable outside its refit category range is predicted on the decayed blend, exactly as a
+ *  board row would be. */
+function looValidation(
+  factory: SizeFactory,
+  data: SnapshotProtocol[],
+): { medMiss: number | null; within3: number | null; within10: number | null; medApe: number | null } {
+  const empty = { medMiss: null, within3: null, within10: null, medApe: null };
+  if (data.length === 0) return empty;
+  const errs: number[] = [];
+  for (let i = 0; i < data.length; i++) {
+    const train = data.filter((_, j) => j !== i);
+    const refit = factory(train);
+    if (refit === null) continue;
+    errs.push(refit.predict(data[i]!) - Math.log(data[i]!.mcap_usd!));
+  }
+  if (errs.length === 0) return empty;
+  const misses = errs.map((e) => Math.exp(Math.abs(e)));
+  const apes = errs.map((e) => Math.abs(Math.exp(e) - 1));
+  return {
+    medMiss: round4(median(misses) ?? 0),
+    within3: round4(misses.filter((m) => m <= 3).length / misses.length),
+    within10: round4(misses.filter((m) => m <= 10).length / misses.length),
+    medApe: round4(median(apes) ?? 0),
+  };
+}
+
 /** Fit every candidate, pick the winner by out-of-sample score, and report the whole comparison. */
 export function fitModel(snapshot: Snapshot): { fit: FitReport; model: SizeModel } {
   const withMcap = snapshot.protocols.filter((p) => p.mcap_usd !== null);
@@ -669,6 +764,8 @@ export function fitModel(snapshot: Snapshot): { fit: FitReport; model: SizeModel
   const model = winnerFactory(winnerData);
   if (model === null) throw new SnapshotError('the winning size model did not fit');
   const inSample = scorePredictions(winnerData.map((p) => model.predict(p)), winnerData);
+  // Leave-one-out validation of the winning model, on its own fit set.
+  const loo = looValidation(winnerFactory, winnerData);
 
   // The growth and age coefficients come from pooled regressions over the trimmed comps, as in
   // radar-3: the tilt is a small multiplier on top of the size curve, whichever size model won.
@@ -706,6 +803,14 @@ export function fitModel(snapshot: Snapshot): { fit: FitReport; model: SizeModel
         )
       : { r2: null, medApe: null, medBias: null, residSd: null };
 
+  // The market line for the dashboard's scatter: the trimmed comparables as [log TVL, log mcap]
+  // pairs, with the pooled curve they were fitted on.
+  const marketLine: { points: [number, number][]; intercept: number; slope: number } = {
+    points: fitted.map((p) => [round3(Math.log(Math.max(p.tvl_usd, 1))), round3(Math.log(p.mcap_usd!))] as [number, number]),
+    intercept: round4(pooledBeta[0]!),
+    slope: round4(pooledBeta[1]!),
+  };
+
   const fit: FitReport = {
     model_version: MODEL_VERSION,
     snapshot_as_of: snapshot.as_of,
@@ -721,7 +826,9 @@ export function fitModel(snapshot: Snapshot): { fit: FitReport; model: SizeModel
     candidates,
     pooled_intercept: round4(pooledBeta[0]!),
     pooled_slope: round4(pooledBeta[1]!),
+    range_decay_sigma: RANGE_DECAY_SIGMA,
     size_intercept: round4(pooledBeta[0]!),
+    size_slope: round4(pooledBeta[1]!),
     size_slope: round4(pooledBeta[1]!),
     curves: model.curves,
     chains_coef: chainsBeta !== null ? round4(chainsBeta[2]!) : 0,
@@ -743,6 +850,11 @@ export function fitModel(snapshot: Snapshot): { fit: FitReport; model: SizeModel
     time_growth_med_ape: timeGrowthScore.medApe !== null ? round4(timeGrowthScore.medApe) : null,
     fold_r2_mean: winner.fold_r2,
     fold_med_ape_mean: winner.fold_med_ape,
+    loo_med_miss: loo.medMiss,
+    loo_within3: loo.within3,
+    loo_within10: loo.within10,
+    loo_med_ape: loo.medApe,
+    market_line: marketLine,
     bootstrap: null,
     verdicts: { farm: 0, thin: 0, skip: 0 },
     farm_share_low: FARM_SHARE_LOW,
@@ -765,7 +877,7 @@ export function impliedValue(
   protocol: SnapshotProtocol,
   fit: FitReport,
   model: SizeModel,
-): { implied: number; growthPct: number; growthTiltValue: number; size: number; low: number; high: number; curve: string } {
+): { implied: number; growthPct: number; growthTiltValue: number; size: number; low: number; high: number; curve: string; curveWeight: number } {
   const growthPct = Math.min(GROWTH_CAP, Math.max(GROWTH_FLOOR, finite(protocol.change_7d, 0)));
   const tilt = growthTilt(protocol, fit);
   const size = Math.exp(model.predict(protocol));
@@ -773,7 +885,7 @@ export function impliedValue(
   const spread = Math.exp(1.6449 * fit.resid_sd_log);
   const low = Math.max(1, Math.round(implied / spread));
   const high = Math.max(implied, Math.round(implied * spread));
-  return { implied, growthPct, growthTiltValue: tilt, size, low, high, curve: model.curveOf(protocol) };
+  return { implied, growthPct, growthTiltValue: tilt, size, low, high, curve: model.curveOf(protocol), curveWeight: model.weightOf(protocol) };
 }
 
 /** DefiLlama's version-marker rule: a name ending in a release is a pool of another protocol. */
@@ -1005,6 +1117,9 @@ export interface FarmPlan {
   gas_usd: number;
   hold_days: number;
   transactions: number;
+  /** Hands-on minutes the plan takes: the step times, with the weekly step counted once per week
+   *  of the hold. The hold itself is waiting, not work. */
+  hands_on_minutes: number;
 }
 
 /**
@@ -1071,12 +1186,16 @@ export function farmPlan(p: SnapshotProtocol, age: number | null): FarmPlan {
   ];
   const weeklyCount = Math.max(1, Math.ceil(hold / 7));
   const transactions = 1 + 1 + 1 + weeklyCount + 1 + 2;
+  // Hands-on minutes: the step times, with the weekly step counted once per week of the hold.
+  // The hold itself is waiting, not work, and costs no hands-on minutes.
+  const handsOnMinutes = 10 + 15 + 15 + 10 * weeklyCount + 0 + 10 + 15 + 10;
   return {
     steps,
     capital_usd: capital,
     gas_usd: gas * transactions,
     hold_days: hold,
     transactions,
+    hands_on_minutes: handsOnMinutes,
   };
 }
 
@@ -1089,24 +1208,35 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): string[] {
  * The farm economics of one row: the whole plan's cost in dollars, the share of the implied value a
  * farmer must capture to break even, the net value under the stated 1% low-end share, and the verdict
  * from the stated policy thresholds. The 1% share is an assumption — it is not fitted, and the
- * dashboard says so next to every number that uses it.
+ * dashboard says so next to every number that uses it. The net per hands-on hour divides that same
+ * net by the plan's hands-on hours, so a row can be compared on value per hour of work.
  */
 export function farmEconomics(plan: FarmPlan, impliedUsd: number): {
   total_cost_usd: number;
   break_even_share: number;
   net_low_usd: number;
+  hands_on_hours: number;
+  net_low_per_hour_usd: number;
   verdict: FarmVerdict;
 } {
   const total = plan.capital_usd + plan.gas_usd;
   const share = total / Math.max(impliedUsd, 1);
   const net = Math.round(FARM_SHARE_LOW * impliedUsd - total);
   const verdict: FarmVerdict = share <= VERDICT_FARM_MAX ? 'FARM' : share <= VERDICT_THIN_MAX ? 'THIN' : 'SKIP';
+  const hours = Math.max(plan.hands_on_minutes, 0) / 60;
   // Eight decimals, not four: a break-even share is of order 1e-5, and four decimals would round
   // every row to zero and make the verdict meaningless.
-  return { total_cost_usd: total, break_even_share: Math.round(share * 1e8) / 1e8, net_low_usd: net, verdict };
+  return {
+    total_cost_usd: total,
+    break_even_share: Math.round(share * 1e8) / 1e8,
+    net_low_usd: net,
+    hands_on_hours: Math.round(hours * 100) / 100,
+    net_low_per_hour_usd: hours > 0 ? Math.round(net / hours) : 0,
+    verdict,
+  };
 }
 
-/** The protocols the board ranks, strongest first, with ranks 1..n. Radar-4 ranks every rankable
+/** The protocols the board ranks, strongest first, with ranks 1..n. Radar-5 ranks every rankable
  *  pre-token protocol in the snapshot — the watchlist plus all of them below the floor — so the radar
  *  finds early protocols instead of stopping at the biggest by TVL. */
 export function buildBoard(snapshot: Snapshot, fit: FitReport, model: SizeModel): BoardRow[] {
@@ -1155,6 +1285,7 @@ export function buildBoard(snapshot: Snapshot, fit: FitReport, model: SizeModel)
       interval_low_usd: s.v.low,
       interval_high_usd: s.v.high,
       curve: s.v.curve,
+      curve_weight: s.v.curveWeight,
       boot_rank_low: 0,
       boot_rank_high: 0,
       boot_low_usd: 0,
@@ -1167,6 +1298,8 @@ export function buildBoard(snapshot: Snapshot, fit: FitReport, model: SizeModel)
     farm_total_cost_usd: s.econ.total_cost_usd,
     farm_break_even_share: s.econ.break_even_share,
     farm_net_low_usd: s.econ.net_low_usd,
+    farm_hands_on_hours: s.econ.hands_on_hours,
+    farm_net_low_per_hour_usd: s.econ.net_low_per_hour_usd,
     farm_verdict: s.econ.verdict,
   }));
 }
@@ -1280,6 +1413,7 @@ export function radarRow(row: BoardRow, watchlist: string[]): RadarRow {
     interval_low_usd: row.model.interval_low_usd,
     interval_high_usd: row.model.interval_high_usd,
     curve: row.model.curve,
+    curve_weight: row.model.curve_weight,
     boot_rank_low: row.model.boot_rank_low,
     boot_rank_high: row.model.boot_rank_high,
     boot_low_usd: row.model.boot_low_usd,
@@ -1291,6 +1425,8 @@ export function radarRow(row: BoardRow, watchlist: string[]): RadarRow {
     farm_total_cost_usd: row.farm_total_cost_usd,
     farm_break_even_share: row.farm_break_even_share,
     farm_net_low_usd: row.farm_net_low_usd,
+    farm_hands_on_hours: row.farm_hands_on_hours,
+    farm_net_low_per_hour_usd: row.farm_net_low_per_hour_usd,
     farm_verdict: row.farm_verdict,
   };
 }
